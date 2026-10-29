@@ -16,9 +16,6 @@ local hub = {}
 env.KrittaxHub = hub
 local settings = {Farm=false, Gate=false, Enemy="All", World="All", Method="Tween", Speed=75, Position="Behind", Distance=5, Priority="Farm > Gate"}
 hub.Settings = settings
-settings.Enemies={All=true}
-settings.WorldBoss,settings.GateInterrupt=false,true
-local excursion,activeBoss,activeGate,gateStarted=nil,nil,nil,0
 settings.AntiAFK, settings.Noclip = false, false
 settings.SpeedEnabled, settings.JumpEnabled = false, false
 settings.WalkSpeed, settings.JumpPower = 32, 75
@@ -101,8 +98,6 @@ local function release()
 end
 local function stop()
     settings.Farm, settings.Gate = false, false
-    settings.WorldBoss=false
-    excursion,activeBoss,activeGate=nil,nil,nil
     settings.AntiAFK,settings.Noclip,settings.SpeedEnabled,settings.JumpEnabled=false,false,false,false
     restorePlayer()
     target = nil
@@ -147,22 +142,6 @@ local function validEnemy(model)
     local folder = workspace:FindFirstChild("Enemies")
     return model and folder and model.Parent == folder and enemyAlive(model)
 end
-local function selectedEnemy(enemy)
-    return settings.Enemies.All==true or settings.Enemies[enemy.Name]==true
-end
-local function chooseWorldBoss(r)
-    local folder=workspace:FindFirstChild("Enemies")
-    local best,distance=nil,math.huge
-    if folder then
-        for _,enemy in ipairs(folder:GetChildren()) do
-            if enemy:GetAttribute("WorldBoss")==true and enemyAlive(enemy) then
-                local d=(r.Position-body(enemy).Position).Magnitude
-                if d<distance then best,distance=enemy,d end
-            end
-        end
-    end
-    return best
-end
 local function chooseEnemy(r, bossName)
     local folder = workspace:FindFirstChild("Enemies")
     if not folder then return nil end
@@ -170,7 +149,6 @@ local function chooseEnemy(r, bossName)
     for _, enemy in ipairs(folder:GetChildren()) do
         local matches = bossName and (enemy.Name == bossName or enemy:GetAttribute("EnemyId") == bossName or enemy:GetAttribute("DisplayName") == bossName)
             or (not bossName and (settings.Enemy == "All" or enemy.Name == settings.Enemy))
-            or (not bossName and selectedEnemy(enemy) and enemy:GetAttribute("WorldBoss")~=true)
         if matches and enemyAlive(enemy) and worldMatches(enemy) then
             local d = (r.Position - body(enemy).Position).Magnitude
             if d < distance then best, distance = enemy, d end
@@ -215,12 +193,6 @@ local function gatePosition(gate)
     if typeof(cf) == "CFrame" then return cf.Position end
     return gate:GetPivot().Position
 end
-local function gateAlive(gate)
-    if not gate or gate.Parent~=workspace or not worldMatches(gate) then return false end
-    local state=gate:GetAttribute("State")
-    local expiry=tonumber(gate:GetAttribute("ExpiresAt"))
-    return (state=="Open" or state=="Active") and (not expiry or expiry>workspace:GetServerTimeNow())
-end
 local function chooseGate(r)
     local best, distance = nil, math.huge
     -- WorldGateController watches direct children of Workspace.
@@ -231,7 +203,6 @@ local function chooseGate(r)
             if (state == "Open" or state == "Active") and (not expiry or expiry > workspace:GetServerTimeNow()) then
                 local attempt = gateAttempts[gate]
                 if state == "Active" or not attempt or os.clock() - attempt > 15 then
-                if not attempt or os.clock() - attempt > 15 then
                     local d = (r.Position - gatePosition(gate)).Magnitude
                     if d < distance then best, distance = gate, d end
                 end
@@ -372,7 +343,6 @@ local function choices(key)
     local values,seen={"All"},{All=true}
     local function add(v) if type(v)=="string" and v~="" and not seen[v] then seen[v]=true;table.insert(values,v) end end
     if key=="Enemy" then
-        for name,enabled in pairs(settings.Enemies) do if enabled then add(name) end end
         local folder=workspace:FindFirstChild("Enemies")
         if folder then for _,m in ipairs(folder:GetChildren()) do if m:IsA("Model") then add(m.Name) end end end
     else
@@ -392,39 +362,14 @@ local function picker(parent,label,key,y,options)
         local exitButton=button(popup,"x",UDim2.fromOffset(326,9),UDim2.fromOffset(24,23),closePopup);exitButton.ZIndex=21
         local list=make("ScrollingFrame",popup,{Position=UDim2.fromOffset(10,42),Size=UDim2.fromOffset(340,228),BackgroundTransparency=1,BorderSizePixel=0,CanvasSize=UDim2.new(),AutomaticCanvasSize=Enum.AutomaticSize.Y,ScrollBarThickness=3,ScrollBarImageColor3=purple,ZIndex=21})
         make("UIListLayout",list,{Padding=UDim.new(0,4),SortOrder=Enum.SortOrder.LayoutOrder})
-        local selectionButtons={}
-        local function updateSelection()
-            for name,item in pairs(selectionButtons) do
-                local enabled=settings.Enemies[name]==true
-                item.Text=(enabled and "[x]  " or "[ ]  ")..name
-                item.BackgroundColor3=enabled and purple or gray
-            end
-        end
         for i,v in ipairs(options or choices(key)) do
             local item=button(list,v,UDim2.new(),UDim2.new(1,-8,0,29),function() settings[key]=v;closePopup();changed() end)
-            local item=button(list,v,UDim2.new(),UDim2.new(1,-8,0,29),function()
-                if key=="Enemy" then
-                    if v=="All" then settings.Enemies={All=not settings.Enemies.All}
-                    else settings.Enemies.All=nil;settings.Enemies[v]=not settings.Enemies[v] end
-                    updateSelection();changed()
-                else settings[key]=v;closePopup();changed() end
-            end)
             item.ZIndex=22;item.LayoutOrder=i
-            if key=="Enemy" then selectionButtons[v]=item
             if settings[key]==v then item.BackgroundColor3=purple end
-            elseif settings[key]==v then item.BackgroundColor3=purple end
         end
-        if key=="Enemy" then header.Text=label.." - select multiple";updateSelection() end
     end)
     stroke(b);b.TextSize=9;b.TextTruncate=Enum.TextTruncate.AtEnd
     table.insert(updates,function() b.Text=tostring(settings[key]).."  v" end)
-    table.insert(updates,function()
-        if key=="Enemy" then
-            local count=0
-            for name,enabled in pairs(settings.Enemies) do if name~="All" and enabled then count=count+1 end end
-            b.Text=settings.Enemies.All and "All enemies  v" or (count==0 and "None selected  v" or tostring(count).." selected  v")
-        else b.Text=tostring(settings[key]).."  v" end
-    end)
 end
 local sliderDrag
 local function slider(parent,label,key,min,max,y,suffix)
@@ -453,17 +398,11 @@ picker(method,"Method","Method",39,{"Tween","Warp"})
 picker(method,"Position","Position",68,{"Behind","Above","Front","Under"})
 slider(method,"Distance","Distance",2,20,103," studs")
 local gate=card("Autofarm","#  World Gate",244,0,115)
-local gate=card("Autofarm","#  World Events",244,0,153)
 toggle(gate,"Auto gate","Gate",39)
-toggle(gate,"Interrupt farm for Gate","GateInterrupt",65)
-toggle(gate,"Auto World Boss","WorldBoss",91)
 picker(gate,"World / zone","World",75)
 local priority=card("Autofarm",":  Settings",244,127,171)
-picker(gate,"World / zone","World",119)
-local priority=card("Autofarm",":  Settings",244,165,133)
 picker(priority,"Task priority","Priority",39,{"Farm > Gate","Gate > Farm"})
 local hint=text(priority,"Farm > Gate\nFinish available farm targets first.\n\nGate > Farm\nPrioritize an available world gate.",UDim2.fromOffset(11,76),UDim2.fromOffset(210,80),10);hint.TextColor3=muted;hint.TextYAlignment=Enum.TextYAlignment.Top;hint.TextWrapped=true
-local hint=text(priority,"Boss first. Gate interrupts when ON.\nReturn to farm after events.\nPriority applies when interrupt is OFF.",UDim2.fromOffset(11,75),UDim2.fromOffset(210,50),10);hint.TextColor3=muted;hint.TextYAlignment=Enum.TextYAlignment.Top;hint.TextWrapped=true
 local travel=card("Movement",">  Movement",0,0,192)
 picker(travel,"Method","Method",39,{"Tween","Warp"})
 slider(travel,"Tween speed","Speed",50,100,77," / 100")
@@ -471,8 +410,6 @@ picker(travel,"Position","Position",121,{"Behind","Above","Front","Under"})
 slider(travel,"Distance","Distance",2,20,151," studs")
 local notes=card("Movement",":  Position",244,0,192)
 local note=text(notes,"Behind / Front\nStand behind or in front of target.\n\nAbove / Under\nMove above or below target.\n\nSpeed applies to Tween mode.",UDim2.fromOffset(11,43),UDim2.fromOffset(208,138),10);note.TextColor3=muted;note.TextWrapped=true;note.TextYAlignment=Enum.TextYAlignment.Top
-local gatePage=card("Gate","#  World Gate",0,0,153)
-toggle(gatePage,"Auto gate","Gate",39);picker(gatePage,"World / zone","World",73);picker(gatePage,"Priority","Priority",109,{"Farm > Gate","Gate > Farm"})
 local modifiers=card("Movement",":  Player",244,0,298)
 toggle(modifiers,"Custom walk speed","SpeedEnabled",39)
 slider(modifiers,"Walk speed","WalkSpeed",0,150,71," / 150")
@@ -481,9 +418,8 @@ slider(modifiers,"Jump power","JumpPower",0,200,146," / 200")
 toggle(modifiers,"Noclip","Noclip",190)
 toggle(modifiers,"Anti-AFK","AntiAFK",222)
 local note=text(modifiers,"Player only / all switches start OFF",UDim2.fromOffset(10,263),UDim2.fromOffset(212,20),9);note.TextColor3=muted
-local gatePage=card("Gate","#  World Events",0,0,218)
-toggle(gatePage,"Auto gate","Gate",39);toggle(gatePage,"Interrupt farm for Gate","GateInterrupt",69);toggle(gatePage,"Auto World Boss","WorldBoss",99)
-picker(gatePage,"World / zone","World",135);picker(gatePage,"Priority","Priority",173,{"Farm > Gate","Gate > Farm"})
+local gatePage=card("Gate","#  World Gate",0,0,153)
+toggle(gatePage,"Auto gate","Gate",39);picker(gatePage,"World / zone","World",73);picker(gatePage,"Priority","Priority",109,{"Farm > Gate","Gate > Farm"})
 local gateNote=card("Gate",":  Gate Status",244,0,153)
 local gn=text(gateNote,"Uses gates loaded in this server.\n\nThe world selector filters zones.\n\nGate entry still needs live testing.",UDim2.fromOffset(11,43),UDim2.fromOffset(208,99),10);gn.TextColor3=muted;gn.TextWrapped=true;gn.TextYAlignment=Enum.TextYAlignment.Top
 local session=card("Settings",":  Session",0,0,153)
@@ -519,7 +455,7 @@ connect(Input.InputBegan,function(input,processed)
     elseif input.KeyCode==Enum.KeyCode.End then stop();refreshUI() end
 end)
 connect(player.CharacterRemoving,function() target=nil;cancelPrompt();release() end)
-connect(player.CharacterRemoving,function() target=nil;excursion=nil;activeBoss=nil;activeGate=nil;cancelPrompt();release();restorePlayer() end)
+connect(player.CharacterRemoving,function() target=nil;cancelPrompt();release();restorePlayer() end)
 connect(Run.Stepped,function()
     if not alive then return end
     local ok,err=pcall(applyPlayer)
@@ -562,79 +498,19 @@ connect(Run.Heartbeat,function(dt)
     local elapsed=accumulator;accumulator=0
     local ok,err=pcall(function()
         if not settings.Farm and not settings.Gate then return end
-        if not settings.Farm and not settings.Gate and not settings.WorldBoss then
-            excursion,activeBoss,activeGate=nil,nil,nil;release();return
-        end
         local r=root()
         if not r then target=nil;release();status="Waiting for respawn";return end
         local gate=settings.Gate and chooseGate(r)
         if settings.Gate and settings.Priority=="Gate > Farm" and gate then target=nil;doGate(r,gate,elapsed);return end
-        local function beginEvent()
-            if settings.Farm and not excursion then
-                excursion={root=r,position=r.CFrame,target=target,started=os.clock()}
-            end
-            if excursion then excursion.returnStarted=nil end
-            target=nil
-        end
-        if not settings.WorldBoss or not validEnemy(activeBoss) then activeBoss=nil end
-        if settings.WorldBoss and not activeBoss then activeBoss=chooseWorldBoss(r) end
-        if activeBoss then
-            beginEvent();cancelPrompt()
-            if activeGate then gateStarted=os.clock() end
-            fight(r,activeBoss,elapsed)
-            status="World Boss: "..activeBoss.Name
-            return
-        end
-        if not settings.Gate or not gateAlive(activeGate) then
-            if activeGate then cancelPrompt();release() end
-            activeGate=nil
-        end
-        local gate=settings.Gate and (activeGate or chooseGate(r))
         if settings.Farm then
             if not validEnemy(target) or not worldMatches(target) or (settings.Enemy~="All" and target.Name~=settings.Enemy) then
-            if not validEnemy(target) or not worldMatches(target) or not selectedEnemy(target) or target:GetAttribute("WorldBoss")==true then
                 target=chooseEnemy(r)
             end
             if target then fight(r,target,elapsed);return end
-        else target=nil end
-        local wantsGate=gate and (activeGate~=nil or settings.GateInterrupt or settings.Priority=="Gate > Farm" or not target)
-        if wantsGate then
-            if activeGate~=gate then activeGate=gate;gateStarted=os.clock();release();cancelPrompt() end
-            beginEvent()
-            local gateState=gate:GetAttribute("State")
-            local bossName=gate:GetAttribute("BossName")
-            local boss=gateState=="Active" and type(bossName)=="string" and chooseEnemy(r,bossName)
-            if boss then gateStarted=os.clock() end
-            local prompt=gate:FindFirstChildWhichIsA("ProximityPrompt",true)
-            if (gateState=="Open" and not prompt) or os.clock()-gateStarted>90 then
-                gateAttempts[gate]=os.clock();activeGate=nil;cancelPrompt();release()
-                status="Gate unavailable - returning to farm"
-            else
-                doGate(r,gate,elapsed)
-                return
-            end
         end
         target=nil
         if gate then doGate(r,gate,elapsed);return end
         release();status="Waiting for matching enemies / Gate in selected zone"
-        if excursion then
-            release();cancelPrompt()
-            if not settings.Farm or excursion.root~=r then excursion=nil
-            elseif (r.Position-excursion.position.Position).Magnitude>3 then
-                -- Bound the return attempt if the server refuses client movement.
-                excursion.returnStarted=excursion.returnStarted or os.clock()
-                if os.clock()-excursion.returnStarted<45 then
-                    move(r,excursion.position,elapsed);status="Returning to farm position";return
-                end
-                excursion=nil
-            else
-                local previous=excursion.target
-                if validEnemy(previous) and selectedEnemy(previous) and worldMatches(previous) then target=previous end
-                excursion=nil
-            end
-        end
-        if settings.Farm and target then fight(r,target,elapsed);return end
-        release();status="Waiting for selected enemies / World Boss / Gate"
     end)
     if not ok then stop();status="Stopped: "..tostring(err);warn("[Krittax HUB] "..tostring(err));refreshUI() end
 end)
