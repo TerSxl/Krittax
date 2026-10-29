@@ -217,57 +217,86 @@ local function doGate(r, gate, dt)
     end
     gateAttempts[gate] = os.clock()
 end
--- UI: compact black/purple layout inspired by the supplied reference.
-local function make(class, parent, props)
-    local object = Instance.new(class)
-    for k,v in pairs(props or {}) do object[k]=v end
-    object.Parent = parent
-    return object
+-- Compact sidebar UI inspired by the user's reference.
+local function make(class,parent,props)
+    local obj=Instance.new(class)
+    for k,v in pairs(props or {}) do obj[k]=v end
+    obj.Parent=parent
+    return obj
 end
-local purple = Color3.fromRGB(151,50,245)
-local gray = Color3.fromRGB(34,34,40)
-local gui = make("ScreenGui", player:WaitForChild("PlayerGui"), {Name="KrittaxHubV1", ResetOnSpawn=false, DisplayOrder=90, ZIndexBehavior=Enum.ZIndexBehavior.Sibling})
-local window = make("Frame", gui, {Size=UDim2.fromOffset(570,440), Position=UDim2.new(0.5,-285,0.5,-220), BackgroundColor3=Color3.fromRGB(17,17,20), BorderSizePixel=0})
-make("UICorner",window,{CornerRadius=UDim.new(0,12)})
-make("UIStroke",window,{Color=Color3.fromRGB(62,56,71),Thickness=1})
-local scale = make("UIScale",window,{Scale=1})
+local purple=Color3.fromRGB(151,37,232)
+local muted=Color3.fromRGB(129,126,137)
+local gray=Color3.fromRGB(25,25,28)
+local gui=make("ScreenGui",player:WaitForChild("PlayerGui"),{Name="KrittaxHubV1",ResetOnSpawn=false,DisplayOrder=90,ZIndexBehavior=Enum.ZIndexBehavior.Sibling})
+local window=make("Frame",gui,{Size=UDim2.fromOffset(660,430),Position=UDim2.new(0.5,-330,0.5,-215),BackgroundColor3=Color3.fromRGB(13,13,15),BorderSizePixel=0})
+local function corner(obj,r) make("UICorner",obj,{CornerRadius=UDim.new(0,r or 6)}) end
+local function stroke(obj) make("UIStroke",obj,{Color=Color3.fromRGB(38,38,43),Thickness=1}) end
+corner(window,9);stroke(window)
+local scale=make("UIScale",window,{Scale=1})
 local function resize()
     local camera=workspace.CurrentCamera
-    if camera then scale.Scale=math.min(1,math.max(0.25,math.min((camera.ViewportSize.X-20)/570,(camera.ViewportSize.Y-40)/440))) end
+    if camera then scale.Scale=math.min(1,math.max(0.2,math.min((camera.ViewportSize.X-24)/660,(camera.ViewportSize.Y-40)/430))) end
 end
 resize()
-local function text(parent, value, position, size, fontSize)
-    return make("TextLabel",parent,{Text=value,Position=position,Size=size,TextSize=fontSize or 13,Font=Enum.Font.Gotham,TextColor3=Color3.fromRGB(220,216,228),BackgroundTransparency=1,TextXAlignment=Enum.TextXAlignment.Left})
+local function text(parent,value,pos,size,fontSize)
+    return make("TextLabel",parent,{Text=value,Position=pos,Size=size,TextSize=fontSize or 11,Font=Enum.Font.Gotham,TextColor3=Color3.fromRGB(215,213,221),BackgroundTransparency=1,TextXAlignment=Enum.TextXAlignment.Left})
 end
-local title = text(window,"Krittax HUB",UDim2.fromOffset(18,8),UDim2.fromOffset(390,32),20)
-title.Active=true
-text(window,"MANGA FIGHTING  /  V1 EXPERIMENTAL",UDim2.fromOffset(18,37),UDim2.fromOffset(420,22),10)
-local function button(parent, label, pos, size, callback)
-    local b=make("TextButton",parent,{Text=label,Position=pos,Size=size,TextColor3=Color3.fromRGB(235,230,242),TextSize=12,Font=Enum.Font.Gotham,BackgroundColor3=gray,BorderSizePixel=0,AutoButtonColor=true})
-    make("UICorner",b,{CornerRadius=UDim.new(0,6)})
-    connect(b.Activated,callback)
-    return b
+local function button(parent,label,pos,size,fn)
+    local b=make("TextButton",parent,{Text=label,Position=pos,Size=size,TextColor3=Color3.fromRGB(211,207,220),TextSize=11,Font=Enum.Font.Gotham,BackgroundColor3=gray,BorderSizePixel=0,AutoButtonColor=true})
+    corner(b,5);connect(b.Activated,fn);return b
 end
+local sidebar=make("Frame",window,{Size=UDim2.new(0,151,1,0),BackgroundColor3=Color3.fromRGB(16,16,18),BorderSizePixel=0})
+corner(sidebar,9)
+make("Frame",window,{Position=UDim2.fromOffset(151,0),Size=UDim2.new(0,1,1,0),BackgroundColor3=Color3.fromRGB(31,31,35),BorderSizePixel=0})
+local brand=text(sidebar,"Krittax",UDim2.fromOffset(16,13),UDim2.fromOffset(122,24),17);brand.Font=Enum.Font.GothamBold
+text(sidebar,"HUB / MANGA FIGHTING",UDim2.fromOffset(17,37),UDim2.fromOffset(130,16),8).TextColor3=muted
+local title=text(window,"Autofarm",UDim2.fromOffset(168,12),UDim2.fromOffset(395,24),16);title.Font=Enum.Font.GothamBold;title.Active=true
+local subtitle=text(window,"Combat and farming features",UDim2.fromOffset(168,36),UDim2.fromOffset(390,18),10);subtitle.TextColor3=muted
+make("Frame",window,{Position=UDim2.fromOffset(168,60),Size=UDim2.fromOffset(476,1),BackgroundColor3=Color3.fromRGB(35,35,39),BorderSizePixel=0})
+make("Frame",window,{Position=UDim2.fromOffset(168,60),Size=UDim2.fromOffset(146,2),BackgroundColor3=purple,BorderSizePixel=0})
 local refreshUI
-local reopen=button(gui,"K HUB",UDim2.fromOffset(14,80),UDim2.fromOffset(74,34),function() window.Visible=not window.Visible end)
-reopen.BackgroundColor3=purple
-button(window,"_",UDim2.new(1,-76,0,12),UDim2.fromOffset(26,26),function() window.Visible=false end)
-button(window,"X",UDim2.new(1,-42,0,12),UDim2.fromOffset(26,26),function() hub.Destroy() end)
-local left=make("Frame",window,{Position=UDim2.fromOffset(16,72),Size=UDim2.fromOffset(263,298),BackgroundTransparency=1})
-local right=make("Frame",window,{Position=UDim2.fromOffset(291,72),Size=UDim2.fromOffset(263,298),BackgroundTransparency=1})
-local updates={}
-local function toggle(parent,label,key,y)
-    local b
-    b=button(parent,"",UDim2.fromOffset(0,y),UDim2.fromOffset(263,34),function()
-        settings[key]=not settings[key]
-        target=nil
-        cancelPrompt()
-        release()
-        refreshUI()
-    end)
-    table.insert(updates,function() b.Text=label.."   "..(settings[key] and "ON" or "OFF");b.BackgroundColor3=settings[key] and purple or gray end)
-end
+local reopen=button(gui,"K HUB",UDim2.fromOffset(14,80),UDim2.fromOffset(68,30),function() window.Visible=not window.Visible end);reopen.BackgroundColor3=purple
+button(window,"-",UDim2.fromOffset(600,15),UDim2.fromOffset(20,22),function() window.Visible=false end)
+button(window,"x",UDim2.fromOffset(625,15),UDim2.fromOffset(20,22),function() hub.Destroy() end)
+local pages,nav,updates={},{},{}
 local popup
+local function closePopup() if popup then popup:Destroy();popup=nil end end
+local function changed() target=nil;cancelPrompt();release();refreshUI() end
+local activePage="Autofarm"
+local function showPage(name)
+    closePopup();activePage=name
+    for key,p in pairs(pages) do p.Visible=key==name end
+    for key,b in pairs(nav) do b.BackgroundTransparency=key==name and 0 or 1;b.TextColor3=key==name and Color3.new(1,1,1) or muted end
+    title.Text=name
+    local descriptions={Autofarm="Combat and farming features",Movement="Follow position and travel controls",Gate="World gate and priority settings",Settings="Session controls and shortcuts"}
+    subtitle.Text=descriptions[name]
+end
+local function category(label,y)
+    text(sidebar,label,UDim2.fromOffset(18,y),UDim2.fromOffset(120,20),10)
+    make("Frame",sidebar,{Position=UDim2.fromOffset(15,y+25),Size=UDim2.fromOffset(120,1),BackgroundColor3=Color3.fromRGB(33,33,37),BorderSizePixel=0})
+end
+category("Main",72);category("Player",159);category("Misc",245)
+for _,spec in ipairs({{"Autofarm",105,"  +   Autofarm"},{"Movement",192,"  >   Movement"},{"Gate",278,"  #   World Gate"},{"Settings",312,"  :   Settings"}}) do
+    local name=spec[1]
+    pages[name]=make("Frame",window,{Position=UDim2.fromOffset(168,74),Size=UDim2.fromOffset(476,306),BackgroundTransparency=1,Visible=false})
+    local b=button(sidebar,spec[3],UDim2.fromOffset(15,spec[2]),UDim2.fromOffset(121,27),function() showPage(name) end)
+    b.TextXAlignment=Enum.TextXAlignment.Left;b.BackgroundColor3=purple;nav[name]=b
+end
+text(sidebar,"V1 / CUSTOM UI",UDim2.fromOffset(17,389),UDim2.fromOffset(125,17),9).TextColor3=muted
+local function card(page,label,x,y,h)
+    local c=make("Frame",pages[page],{Position=UDim2.fromOffset(x,y),Size=UDim2.fromOffset(232,h),BackgroundColor3=Color3.fromRGB(17,17,19),BorderSizePixel=0})
+    corner(c,7);stroke(c)
+    local head=text(c,label,UDim2.fromOffset(10,7),UDim2.fromOffset(212,21),11);head.Font=Enum.Font.GothamMedium
+    make("Frame",c,{Position=UDim2.fromOffset(10,32),Size=UDim2.fromOffset(212,1),BackgroundColor3=Color3.fromRGB(32,32,36),BorderSizePixel=0})
+    return c
+end
+local function toggle(parent,label,key,y)
+    text(parent,label,UDim2.fromOffset(10,y),UDim2.fromOffset(163,25),10).TextColor3=muted
+    local b=button(parent,"",UDim2.fromOffset(194,y+5),UDim2.fromOffset(27,15),function() settings[key]=not settings[key];changed() end)
+    corner(b,8)
+    local knob=make("Frame",b,{Size=UDim2.fromOffset(11,11),Position=UDim2.fromOffset(2,2),BackgroundColor3=Color3.fromRGB(224,221,231),BorderSizePixel=0});corner(knob,8)
+    table.insert(updates,function() b.BackgroundColor3=settings[key] and purple or Color3.fromRGB(52,52,57);knob.Position=UDim2.fromOffset(settings[key] and 14 or 2,2) end)
+end
 local function choices(key)
     local values,seen={"All"},{All=true}
     local function add(v) if type(v)=="string" and v~="" and not seen[v] then seen[v]=true;table.insert(values,v) end end
@@ -275,56 +304,86 @@ local function choices(key)
         local folder=workspace:FindFirstChild("Enemies")
         if folder then for _,m in ipairs(folder:GetChildren()) do if m:IsA("Model") then add(m.Name) end end end
     else
-        if zones and type(zones.Zones)=="table" then
-            for _,z in pairs(zones.Zones) do if type(z)=="table" then add(z.id) end end
-        end
+        if zones and type(zones.Zones)=="table" then for _,z in pairs(zones.Zones) do if type(z)=="table" then add(z.id) end end end
         for _,m in ipairs(workspace:GetChildren()) do if m.Name=="WorldGate" then add(zoneOf(m)) end end
     end
     table.sort(values,function(a,b) if a=="All" then return b~="All" elseif b=="All" then return false else return a<b end end)
     return values
 end
 local function picker(parent,label,key,y,options)
-    text(parent,label,UDim2.fromOffset(0,y),UDim2.fromOffset(260,18),11)
+    text(parent,label,UDim2.fromOffset(10,y),UDim2.fromOffset(100,26),10).TextColor3=muted
     local b
-    b=button(parent,"",UDim2.fromOffset(0,y+21),UDim2.fromOffset(263,30),function()
-        if popup then popup:Destroy();popup=nil end
-        popup=make("Frame",window,{Position=UDim2.fromOffset(80,75),Size=UDim2.fromOffset(410,290),BackgroundColor3=Color3.fromRGB(25,23,31),BorderSizePixel=0,ZIndex=10})
-        make("UICorner",popup,{CornerRadius=UDim.new(0,8)})
-        local heading=text(popup,label,UDim2.fromOffset(12,4),UDim2.fromOffset(340,30),14);heading.ZIndex=11
-        local close=button(popup,"X",UDim2.fromOffset(370,8),UDim2.fromOffset(28,26),function() if popup then popup:Destroy();popup=nil end end);close.ZIndex=11
-        local list=make("ScrollingFrame",popup,{Position=UDim2.fromOffset(10,42),Size=UDim2.fromOffset(390,236),BackgroundTransparency=1,BorderSizePixel=0,CanvasSize=UDim2.new(),AutomaticCanvasSize=Enum.AutomaticSize.Y,ScrollBarThickness=4,ZIndex=11})
-        make("UIListLayout",list,{Padding=UDim.new(0,5),SortOrder=Enum.SortOrder.LayoutOrder})
+    b=button(parent,"",UDim2.fromOffset(112,y+3),UDim2.fromOffset(109,21),function()
+        closePopup()
+        popup=make("Frame",window,{Position=UDim2.fromOffset(210,85),Size=UDim2.fromOffset(360,280),BackgroundColor3=Color3.fromRGB(20,19,24),BorderSizePixel=0,ZIndex=20});corner(popup,7);stroke(popup)
+        local header=text(popup,label,UDim2.fromOffset(12,7),UDim2.fromOffset(300,25),13);header.ZIndex=21
+        local exitButton=button(popup,"x",UDim2.fromOffset(326,9),UDim2.fromOffset(24,23),closePopup);exitButton.ZIndex=21
+        local list=make("ScrollingFrame",popup,{Position=UDim2.fromOffset(10,42),Size=UDim2.fromOffset(340,228),BackgroundTransparency=1,BorderSizePixel=0,CanvasSize=UDim2.new(),AutomaticCanvasSize=Enum.AutomaticSize.Y,ScrollBarThickness=3,ScrollBarImageColor3=purple,ZIndex=21})
+        make("UIListLayout",list,{Padding=UDim.new(0,4),SortOrder=Enum.SortOrder.LayoutOrder})
         for i,v in ipairs(options or choices(key)) do
-            local item=button(list,v,UDim2.new(),UDim2.new(1,-8,0,30),function()
-                settings[key]=v;target=nil;cancelPrompt();release();popup:Destroy();popup=nil;refreshUI()
-            end)
-            item.ZIndex=12;item.LayoutOrder=i
+            local item=button(list,v,UDim2.new(),UDim2.new(1,-8,0,29),function() settings[key]=v;closePopup();changed() end)
+            item.ZIndex=22;item.LayoutOrder=i
+            if settings[key]==v then item.BackgroundColor3=purple end
         end
     end)
-    table.insert(updates,function() b.Text=tostring(settings[key]).."   v" end)
+    stroke(b);b.TextSize=9;b.TextTruncate=Enum.TextTruncate.AtEnd
+    table.insert(updates,function() b.Text=tostring(settings[key]).."  v" end)
 end
-toggle(left,"Autofarm","Farm",0)
-picker(left,"SELECT ENEMY (loaded enemies)","Enemy",44)
-picker(left,"FARM METHOD","Method",108,{"Tween","Warp"})
-picker(left,"POSITION","Position",172,{"Behind","Above","Front","Under"})
-text(left,"Tween speed: 50 - 100 studs/sec",UDim2.fromOffset(0,237),UDim2.fromOffset(260,18),11)
-local speed=make("TextBox",left,{Position=UDim2.fromOffset(0,259),Size=UDim2.fromOffset(263,30),Text="75",ClearTextOnFocus=false,TextSize=13,Font=Enum.Font.Gotham,TextColor3=Color3.new(1,1,1),BackgroundColor3=gray,BorderSizePixel=0})
-make("UICorner",speed,{CornerRadius=UDim.new(0,6)})
-connect(speed.FocusLost,function() settings.Speed=math.clamp(tonumber(speed.Text) or 75,50,100);speed.Text=tostring(settings.Speed) end)
-toggle(right,"Auto Gate","Gate",0)
-picker(right,"SELECT WORLD / ZONE","World",44)
-picker(right,"PRIORITY","Priority",108,{"Farm > Gate","Gate > Farm"})
-text(right,"Position distance: 2 - 20 studs",UDim2.fromOffset(0,177),UDim2.fromOffset(260,18),11)
-local distance=make("TextBox",right,{Position=UDim2.fromOffset(0,198),Size=UDim2.fromOffset(263,30),Text="5",ClearTextOnFocus=false,TextSize=13,Font=Enum.Font.Gotham,TextColor3=Color3.new(1,1,1),BackgroundColor3=gray,BorderSizePixel=0})
-make("UICorner",distance,{CornerRadius=UDim.new(0,6)})
-connect(distance.FocusLost,function() settings.Distance=math.clamp(tonumber(distance.Text) or 5,2,20);distance.Text=tostring(settings.Distance) end)
-local stopButton=button(right,"STOP ALL",UDim2.fromOffset(0,252),UDim2.fromOffset(263,37),function() stop();refreshUI() end)
-stopButton.BackgroundColor3=Color3.fromRGB(115,39,66)
-local statusLabel=text(window,status,UDim2.fromOffset(18,380),UDim2.fromOffset(532,32),11)
-statusLabel.TextWrapped=true
-text(window,"Right Ctrl: show/hide  |  End: stop  |  X: unload",UDim2.fromOffset(18,411),UDim2.fromOffset(530,18),10)
+local sliderDrag
+local function slider(parent,label,key,min,max,y,suffix)
+    text(parent,label,UDim2.fromOffset(10,y),UDim2.fromOffset(132,19),10).TextColor3=muted
+    local value=make("TextBox",parent,{Position=UDim2.fromOffset(146,y),Size=UDim2.fromOffset(75,19),BackgroundTransparency=1,TextColor3=muted,Font=Enum.Font.Gotham,TextSize=9,TextXAlignment=Enum.TextXAlignment.Right,ClearTextOnFocus=false,Text=""})
+    local track=make("Frame",parent,{Position=UDim2.fromOffset(10,y+25),Size=UDim2.fromOffset(211,5),BackgroundColor3=Color3.fromRGB(42,40,47),BorderSizePixel=0});corner(track,4)
+    local fill=make("Frame",track,{Size=UDim2.new(),BackgroundColor3=purple,BorderSizePixel=0});corner(fill,4)
+    local hit=make("TextButton",track,{Position=UDim2.fromOffset(0,-8),Size=UDim2.new(1,0,0,23),Text="",BackgroundTransparency=1,BorderSizePixel=0})
+    local function setAt(x) settings[key]=math.floor(min+math.clamp((x-track.AbsolutePosition.X)/math.max(1,track.AbsoluteSize.X),0,1)*(max-min)+0.5);refreshUI() end
+    connect(hit.InputBegan,function(input)
+        if input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch then sliderDrag={input=input,setAt=setAt};setAt(input.Position.X) end
+    end)
+    connect(value.FocusLost,function() settings[key]=math.clamp(tonumber(value.Text:match("[%d.]+")) or settings[key],min,max);refreshUI() end)
+    table.insert(updates,function() fill.Size=UDim2.fromScale((settings[key]-min)/(max-min),1);if not value:IsFocused() then value.Text=tostring(settings[key])..(suffix or "") end end)
+end
+connect(Input.InputChanged,function(input)
+    if sliderDrag and (input==sliderDrag.input or input.UserInputType==Enum.UserInputType.MouseMovement) then sliderDrag.setAt(input.Position.X) end
+end)
+connect(Input.InputEnded,function(input) if sliderDrag and (input==sliderDrag.input or input.UserInputType==Enum.UserInputType.MouseButton1) then sliderDrag=nil end end)
+local farm=card("Autofarm","+  Autofarm",0,0,143)
+slider(farm,"Tween speed","Speed",50,100,39," / 100")
+toggle(farm,"Enable autofarm","Farm",78)
+picker(farm,"Target enemy","Enemy",108)
+local method=card("Autofarm",">  Farm Method",0,155,143)
+picker(method,"Method","Method",39,{"Tween","Warp"})
+picker(method,"Position","Position",68,{"Behind","Above","Front","Under"})
+slider(method,"Distance","Distance",2,20,103," studs")
+local gate=card("Autofarm","#  World Gate",244,0,115)
+toggle(gate,"Auto gate","Gate",39)
+picker(gate,"World / zone","World",75)
+local priority=card("Autofarm",":  Settings",244,127,171)
+picker(priority,"Task priority","Priority",39,{"Farm > Gate","Gate > Farm"})
+local hint=text(priority,"Farm > Gate\nFinish available farm targets first.\n\nGate > Farm\nPrioritize an available world gate.",UDim2.fromOffset(11,76),UDim2.fromOffset(210,80),10);hint.TextColor3=muted;hint.TextYAlignment=Enum.TextYAlignment.Top;hint.TextWrapped=true
+local travel=card("Movement",">  Movement",0,0,192)
+picker(travel,"Method","Method",39,{"Tween","Warp"})
+slider(travel,"Tween speed","Speed",50,100,77," / 100")
+picker(travel,"Position","Position",121,{"Behind","Above","Front","Under"})
+slider(travel,"Distance","Distance",2,20,151," studs")
+local notes=card("Movement",":  Position",244,0,192)
+local note=text(notes,"Behind / Front\nStand behind or in front of target.\n\nAbove / Under\nMove above or below target.\n\nSpeed applies to Tween mode.",UDim2.fromOffset(11,43),UDim2.fromOffset(208,138),10);note.TextColor3=muted;note.TextWrapped=true;note.TextYAlignment=Enum.TextYAlignment.Top
+local gatePage=card("Gate","#  World Gate",0,0,153)
+toggle(gatePage,"Auto gate","Gate",39);picker(gatePage,"World / zone","World",73);picker(gatePage,"Priority","Priority",109,{"Farm > Gate","Gate > Farm"})
+local gateNote=card("Gate",":  Gate Status",244,0,153)
+local gn=text(gateNote,"Uses gates loaded in this server.\n\nThe world selector filters zones.\n\nGate entry still needs live testing.",UDim2.fromOffset(11,43),UDim2.fromOffset(208,99),10);gn.TextColor3=muted;gn.TextWrapped=true;gn.TextYAlignment=Enum.TextYAlignment.Top
+local session=card("Settings",":  Session",0,0,153)
+button(session,"Stop all",UDim2.fromOffset(11,43),UDim2.fromOffset(210,30),function() stop();refreshUI() end)
+button(session,"Hide window",UDim2.fromOffset(11,80),UDim2.fromOffset(210,25),function() window.Visible=false end)
+button(session,"Unload HUB",UDim2.fromOffset(11,112),UDim2.fromOffset(210,25),function() hub.Destroy() end)
+local keys=card("Settings",":  Shortcuts",244,0,153)
+local kt=text(keys,"Right Ctrl    Show / hide\nEnd             Stop all\nK HUB         Reopen window\n\nDrag the page title to move.",UDim2.fromOffset(11,43),UDim2.fromOffset(208,99),10);kt.TextColor3=muted;kt.TextYAlignment=Enum.TextYAlignment.Top
+make("Frame",window,{Position=UDim2.fromOffset(168,388),Size=UDim2.fromOffset(476,1),BackgroundColor3=Color3.fromRGB(32,32,36),BorderSizePixel=0})
+local statusLabel=text(window,status,UDim2.fromOffset(168,393),UDim2.fromOffset(390,29),9);statusLabel.TextColor3=muted;statusLabel.TextWrapped=true
+local stopButton=button(window,"Stop",UDim2.fromOffset(592,396),UDim2.fromOffset(52,24),function() stop();refreshUI() end);stopButton.TextColor3=Color3.fromRGB(215,152,178)
 refreshUI=function() for _,update in ipairs(updates) do update() end end
-refreshUI()
+refreshUI();showPage(activePage)
+
 local dragging,dragStart,startPosition,dragTouch
 connect(title.InputBegan,function(input)
     if input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch then
@@ -381,3 +440,4 @@ connect(Run.Heartbeat,function(dt)
     if not ok then stop();status="Stopped: "..tostring(err);warn("[Krittax HUB] "..tostring(err));refreshUI() end
 end)
 print("[Krittax HUB V1] Loaded. Autofarm and Gate are OFF. PlaceId="..tostring(game.PlaceId))
+
