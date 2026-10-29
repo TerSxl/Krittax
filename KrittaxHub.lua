@@ -1,4 +1,4 @@
--- KRITTAX ANDROID DIAGNOSTIC BUILD 1.3 - copy the entire file.
+-- KRITTAX ANDROID DIAGNOSTIC BUILD 1.5 - copy the entire file.
 local player=game:GetService("Players").LocalPlayer
 assert(player,"Join a game first")
 local pg=player:WaitForChild("PlayerGui",10)
@@ -12,8 +12,8 @@ local box=Instance.new("TextBox")
 box.Size=UDim2.new(0.92,0,0.22,0);box.Position=UDim2.new(0.04,0,0.04,0)
 box.BackgroundColor3=Color3.fromRGB(40,20,65);box.TextColor3=Color3.new(1,1,1)
 box.TextSize=15;box.TextWrapped=true;box.MultiLine=true;box.ClearTextOnFocus=false
-box.Text="KRITTAX 1.3 - loader started";box.Parent=panel;panel.Parent=pg
-local function report(message) box.Text="KRITTAX 1.3\n"..tostring(message);print(box.Text) end
+box.Text="KRITTAX 1.5 - loader started";box.Parent=panel;panel.Parent=pg
+local function report(message) box.Text="KRITTAX 1.5\n"..tostring(message);print(box.Text) end
 local payload=[====[
 local report = ...
 local function startKrittaxHub()
@@ -40,6 +40,8 @@ if env.KrittaxHub and type(env.KrittaxHub.Destroy) == "function" then
 end
 report("2/6 Session")
 local hub = {}
+local feature={}
+local refreshUI
 local gui
 env.KrittaxHub = hub
 local settings = {Farm=false, Gate=false, Enemy="All", World="All", Method="Tween", Speed=75, Position="Behind", Distance=5, Priority="Farm > Gate"}
@@ -48,10 +50,8 @@ settings.Enemies={All=true}
 settings.GateWorlds={All=true};settings.BossWorlds={All=true}
 settings.Reequip=true;settings.SummonWorld="Ninja Zone"
 local arrival,teamBusy,teamRestore=nil,false,nil
-local summonBusy,summonOwned=false,false
 local summonStatus="Auto Summon: stopped"
 local stopSummon
-local summonCancel=false
 settings.WorldBoss,settings.GateInterrupt=false,true
 local excursion,activeBoss,activeGate,gateStarted=nil,nil,nil,0
 settings.AntiAFK, settings.Noclip = false, false
@@ -151,6 +151,7 @@ end
 local function stop()
     settings.Farm, settings.Gate = false, false
     settings.WorldBoss=false
+    if feature.stop then feature.stop() end
     arrival=nil
     if teamRestore then teamRestore() end
     if stopSummon then stopSummon() end
@@ -222,7 +223,7 @@ local function chooseWorldBoss(r)
     local best,distance=nil,math.huge
     if folder then
         for _,enemy in ipairs(folder:GetChildren()) do
-            if enemy:GetAttribute("WorldBoss")==true and enemyAlive(enemy) and eventWorldMatches(enemy,"BossWorlds") then
+            if enemy:GetAttribute("WorldBoss")==true and enemyAlive(enemy) and eventWorldMatches(enemy,"BossWorlds") and not feature.bossLimit(enemy) then
                 local d=(r.Position-body(enemy).Position).Magnitude
                 if d<distance then best,distance=enemy,d end
             end
@@ -312,33 +313,13 @@ local function fight(r,enemy,dt)
     status="Holding ground: "..enemy.Name
 end
 local function summonRequest(action)
-    if summonBusy then return end
-    local remotes=RS:FindFirstChild("GachaRemotes")
-    local remote=remotes and remotes:FindFirstChild("AutoSummon")
-    if not remote or not remote:IsA("RemoteFunction") then summonStatus="AutoSummon remote missing";return end
-    summonBusy=true;summonStatus="Summon: requesting "..action
-    local zone=settings.SummonWorld=="Ninja Zone" and "" or settings.SummonWorld
-    local count=tonumber(remote:GetAttribute("DefaultCount")) or 10
-    task.spawn(function()
-        local ok,accepted,message=pcall(function()
-            if action=="Stop" then return remote:InvokeServer("Stop") end
-            return remote:InvokeServer("Start",{zoneId=zone,count=count})
-        end)
-        summonBusy=false
-        if not ok then summonStatus="Summon error: "..tostring(accepted)
-        elseif accepted==false then summonStatus="Summon rejected: "..tostring(message)
-        else
-            summonOwned=action=="Start"
-            summonStatus=action=="Start" and "Summon requested: "..settings.SummonWorld or "Summon stopped"
-        end
-        if summonOwned and (not alive or summonCancel) then stopSummon() end
-    end)
-    task.delay(12,function() if summonBusy then summonStatus="Summon awaiting server; no duplicate request" end end)
+    settings.Summon=action=="Start"
+    if settings.Summon then
+        feature.nextRoll=os.clock()+0.5
+        summonStatus="Normal summon: moving to selected shrine"
+    else summonStatus="Auto Summon: stopped" end
 end
-stopSummon=function()
-    summonCancel=true
-    if summonOwned and not summonBusy then summonRequest("Stop") end
-end
+stopSummon=function() summonRequest("Stop") end
 local function gatePosition(gate)
     local cf = gate:GetAttribute("GateCFrame")
     if typeof(cf) == "CFrame" then return cf.Position end
@@ -415,6 +396,435 @@ local function doGate(r, gate, dt)
     end
     gateAttempts[gate] = os.clock()
 end
+-- V1.4 features; injected into the standalone payload by build-v14.cjs.
+feature.http=game:GetService("HttpService")
+feature.tags=game:GetService("CollectionService")
+feature.lighting=game:GetService("Lighting")
+feature.questStatus="Quest: OFF"
+feature.notifyStatus="Notifications: OFF"
+feature.effects=setmetatable({},{__mode="k"})
+feature.pending={}
+feature.inventory={}
+feature.lastQuest=0
+feature.nextRoll=0
+feature.nextSend=0
+feature.url=""
+settings.Quest=false;settings.QuestWorld="Ninja Zone"
+settings.Summon=false;
+settings.Webhook=false;settings.LowFX=false
+
+function feature.zone(world)
+    return (world=="Ninja Zone" or world=="Default" or world==nil) and "" or world
+end
+function feature.position(instance)
+    if instance:IsA("Attachment") then return instance.WorldPosition end
+    if instance:IsA("BasePart") then return instance.Position end
+    if instance:IsA("Model") then return instance:GetPivot().Position end
+end
+function feature.tagged(tag,zone,r)
+    local best,distance
+    for _,object in ipairs(feature.tags:GetTagged(tag)) do
+        if object:IsDescendantOf(workspace) and feature.zone(object:GetAttribute("ZoneId"))==feature.zone(zone) then
+            local pos=feature.position(object)
+            if pos then
+                local d=(r.Position-pos).Magnitude
+                if not distance or d<distance then best,distance=object,d end
+            end
+        end
+    end
+    return best
+end
+function feature.approach(r,object,dt,radius)
+    local pos=feature.position(object)
+    if not pos then return false end
+    if (r.Position-pos).Magnitude<=radius then return true end
+    arrival=nil;release()
+    local delta=Vector3.new(r.Position.X-pos.X,0,r.Position.Z-pos.Z)
+    local offset=delta.Magnitude>0.1 and delta.Unit*math.max(2,radius-2) or Vector3.new(0,0,3)
+    move(r,CFrame.new(pos+offset),dt)
+    return false
+end
+function feature.seekZone(r,zone,dt)
+    local data=zones and zones.Get(feature.zone(zone))
+    local object=workspace
+    if data and type(data.spawnPath)=="table" then
+        for _,name in ipairs(data.spawnPath) do object=object and object:FindFirstChild(name) end
+        if object then feature.approach(r,object,dt,5);return end
+    end
+    -- Streaming may hide the destination; never invent a world teleport remote.
+end
+function feature.questState()
+    local raw=player:GetAttribute("MissionState")
+    if type(raw)~="string" then return nil end
+    local ok,state=pcall(function() return feature.http:JSONDecode(raw) end)
+    if not ok or type(state)~="table" then return nil end
+    local done={}
+    for key,value in pairs(type(state.done)=="table" and state.done or {}) do
+        if type(key)=="number" then done[value]=true elseif value==true then done[key]=true end
+    end
+    state.done=done;state.bountyAt=type(state.bountyAt)=="table" and state.bountyAt or {}
+    return state
+end
+function feature.questCall(action,id,board)
+    if feature.questBusy or os.clock()-feature.lastQuest<4 then return end
+    local event=RS:FindFirstChild("MissionRemote")
+    if not event or not event:IsA("RemoteFunction") then feature.questStatus="MissionRemote missing";return end
+    feature.questBusy=true;feature.lastQuest=os.clock()
+    feature.questStatus="Quest: "..action.." requested"
+    task.spawn(function()
+        local ok,result=pcall(function()
+            if action=="Claim" then return event:InvokeServer("Claim") end
+            event:InvokeServer("Open",board)
+            if not alive or not settings.Quest then return {ok=false,message="Stopped"} end
+            return event:InvokeServer("Accept",id)
+        end)
+        feature.questBusy=false
+        if not alive or not settings.Quest then return end
+        if not ok or type(result)~="table" or result.ok~=true then
+            feature.questStatus="Quest refused: "..(type(result)=="table" and tostring(result.message) or "request failed")
+            feature.lastQuest=os.clock()+6
+        else feature.questStatus="Quest: "..action.." accepted; awaiting progress" end
+    end)
+    task.delay(15,function()
+        if alive and feature.questBusy then feature.questStatus="Quest server response pending; no duplicate call" end
+    end)
+end
+function feature.questStep(r,dt)
+    if not settings.Quest then return false end
+    if feature.questBusy then release();status=feature.questStatus;return true end
+    local data=feature.missions
+    local state=feature.questState()
+    if not data or not state then feature.questStatus="Waiting for MissionData / MissionState";status=feature.questStatus;release();return true end
+    local active=type(state.active)=="table" and state.active or nil
+    local mission=active and data.Get(active.id)
+    local zone=feature.zone(settings.QuestWorld)
+    if active and not mission then feature.questStatus="Active quest is not mapped; keeping it";release();status=feature.questStatus;return true end
+    if mission then zone=feature.zone(data.ZoneIdFor(mission.zone)) end
+    if not mission then
+        for _,entry in ipairs(data.Orders(data.KeyFor(zone))) do
+            local candidate=type(entry)=="table" and entry or data.Get(entry)
+            if candidate and candidate.kind=="kill" and data.Status(candidate,state,workspace:GetServerTimeNow())=="open" then mission=candidate;break end
+        end
+    end
+    if not mission then feature.questStatus="No available kill quest / bounty cooldown";release();status=feature.questStatus;return true end
+    if mission.kind~="kill" then feature.questStatus="Active quest type is not supported";release();status=feature.questStatus;return true end
+    local ready=active and (tonumber(active.progress) or 0)>=(tonumber(mission.count) or math.huge)
+    if not active or ready then
+        release();arrival=nil
+        if os.clock()-feature.lastQuest<4 then status=feature.questStatus;return true end
+        local npc=feature.tagged("MissionQuestNPC",zone,r)
+        if not npc then feature.seekZone(r,zone,dt);feature.questStatus="Waiting for quest NPC: "..(zone=="" and "Ninja Zone" or zone)
+        elseif feature.approach(r,npc,dt,9) then feature.questCall(ready and "Claim" or "Accept",mission.id,mission.zone)
+        else feature.questStatus="Moving to Mission Board" end
+    else
+        local enemy=feature.questTarget
+        if not validEnemy(enemy) or not table.find(mission.targets or {},enemy.Name) or zoneOf(enemy)~=zone then
+            enemy=nil
+            local distance=math.huge
+            local folder=workspace:FindFirstChild("Enemies")
+            if folder then for _,candidate in ipairs(folder:GetChildren()) do
+                if table.find(mission.targets or {},candidate.Name) and enemyAlive(candidate) and zoneOf(candidate)==zone then
+                    local d=(r.Position-body(candidate).Position).Magnitude
+                    if d<distance then enemy,distance=candidate,d end
+                end
+            end end
+            feature.questTarget=enemy
+        end
+        feature.questStatus=tostring(mission.title or mission.id).."  "..tostring(active.progress or 0).."/"..tostring(mission.count)
+        if enemy then fight(r,enemy,dt) else release();feature.seekZone(r,zone,dt);feature.questStatus=feature.questStatus.." - waiting for target" end
+    end
+    status=feature.questStatus
+    return true
+end
+function feature.summonStep(r,dt)
+    if not settings.Summon then return false end
+    release();arrival=nil
+    if feature.rollPending then
+        if os.clock()-feature.rollPending>30 then
+            settings.Summon=false;summonStatus="No roll result after 30s. Check game UI, then Start again."
+            feature.rollPending=nil;refreshUI()
+        end
+        status=summonStatus;return true
+    end
+    if player:GetAttribute("GachaPlaying")==true then summonStatus="Waiting for current reveal to finish";status=summonStatus;return true end
+    local shrine=feature.tagged("GachaShrine",settings.SummonWorld,r)
+    if not shrine then
+        feature.seekZone(r,settings.SummonWorld,dt);summonStatus="Shrine not loaded: travel to "..settings.SummonWorld
+    else
+        local prompt=shrine:FindFirstChild("GachaPrompt",true)
+        local destination=prompt and prompt.Parent or shrine
+        local radius=prompt and math.min(8,math.max(2,prompt.MaxActivationDistance-1)) or 6
+        if not feature.approach(r,destination,dt,radius) then summonStatus="Moving to shrine: "..settings.SummonWorld
+        elseif os.clock()>=feature.nextRoll then
+            local remotes=RS:FindFirstChild("GachaRemotes")
+            local event=remotes and remotes:FindFirstChild("RequestRoll")
+            if not feature.rollHooked or not event or not event:IsA("RemoteEvent") then
+                summonStatus="Waiting for RequestRoll / GachaResult"
+            else
+                feature.nextRoll=os.clock()+2;feature.rollPending=os.clock()
+                summonStatus="Normal summon x1 requested"
+                event:FireServer(1)
+            end
+        end
+    end
+    status=summonStatus;return true
+end
+function feature.effect(object)
+    if not settings.LowFX then return end
+    if object:IsA("ParticleEmitter") or object:IsA("Trail") or object:IsA("Beam") or object:IsA("Smoke") or object:IsA("Fire") or object:IsA("Sparkles")
+        or object:IsA("BloomEffect") or object:IsA("BlurEffect") or object:IsA("DepthOfFieldEffect") or object:IsA("SunRaysEffect") then
+        if feature.effects[object]==nil then feature.effects[object]=object.Enabled end
+        object.Enabled=false
+    end
+end
+function feature.lowFX(enabled)
+    if enabled then
+        for _,container in ipairs({workspace,feature.lighting}) do for _,object in ipairs(container:GetDescendants()) do feature.effect(object) end end
+    else
+        for object,value in pairs(feature.effects) do pcall(function() object.Enabled=value end) end
+        feature.effects=setmetatable({},{__mode="k"})
+    end
+end
+function feature.validURL(url)
+    return type(url)=="string" and url:match("^https://discord%.com/api/webhooks/%d+/[%w_%-]+$")~=nil
+end
+function feature.addItem(id,count)
+    if settings.Webhook and count>0 then feature.pending[id]=(feature.pending[id] or 0)+count end
+end
+function feature.inventoryEvent(action,values)
+    if type(values)~="table" or (action~="Sync" and action~="Update") then return end
+    if action=="Sync" then
+        -- Snapshots and resyncs establish a baseline, never announce owned items.
+        feature.inventory={}
+        for id,count in pairs(values) do if type(id)=="string" and type(count)=="number" then feature.inventory[id]=count end end
+        feature.inventoryReady=true;return
+    end
+    for id,count in pairs(values) do
+        if type(id)=="string" and type(count)=="number" then
+            if feature.inventoryReady then feature.addItem("Item: "..id,math.max(0,count-(feature.inventory[id] or 0))) end
+            feature.inventory[id]=count
+        end
+    end
+end
+function feature.itemName(key)
+    if key:sub(1,6)=="Item: " and feature.items and type(feature.items.Get)=="function" then
+        local ok,data=pcall(feature.items.Get,key:sub(7))
+        if ok and type(data)=="table" then return tostring(data.Name or data.name or key) end
+    end
+    return key
+end
+function feature.send(test)
+    if feature.sending or not settings.Webhook or not feature.validURL(feature.url) then return end
+    local requestFn=request or http_request or (type(syn)=="table" and syn.request)
+    if type(requestFn)~="function" then feature.notifyStatus="HTTP request unavailable in this executor";settings.Webhook=false;refreshUI();return end
+    local batch,lines={},{}
+    local size=0
+    local keys={}
+    for key in pairs(feature.pending) do table.insert(keys,key) end
+    table.sort(keys)
+    if not test then for _,key in ipairs(keys) do
+        local count=feature.pending[key]
+        local line=feature.itemName(key):sub(1,100):gsub("[\r\n]"," ").." x"..tostring(count)
+        if size+#line>1400 then break end
+        batch[key]=count;table.insert(lines,line);size=size+#line+1
+    end end
+    local content=test and "Krittax HUB: webhook test OK" or ("Krittax HUB - items received (5-minute summary)\n"..(#lines>0 and table.concat(lines,"\n") or "No new items recorded."))
+    -- Explicit [] prevents Discord role/user/everyone mentions in item names.
+    local payload='{"content":'..feature.http:JSONEncode(content)..',"allowed_mentions":{"parse":[]}}'
+    local url=feature.url
+    feature.sending=true;feature.notifyStatus="Sending summary..."
+    task.spawn(function()
+        local ok,response=pcall(requestFn,{Url=url.."?wait=true",Method="POST",Headers={["Content-Type"]="application/json"},Body=payload})
+        feature.sending=false
+        if not alive then return end
+        local code=ok and type(response)=="table" and tonumber(response.StatusCode)
+        if code and code>=200 and code<300 then
+            for key,count in pairs(batch) do
+                feature.pending[key]=math.max(0,(feature.pending[key] or 0)-count)
+                if feature.pending[key]==0 then feature.pending[key]=nil end
+            end
+            feature.notifyStatus=test and "Test sent successfully" or "Summary sent successfully"
+            feature.nextSend=os.clock()+300
+        elseif code==429 then
+            local retry=60
+            local decoded,result=pcall(function() return feature.http:JSONDecode(response.Body or "") end)
+            if decoded and type(result)=="table" then retry=math.max(5,tonumber(result.retry_after) or 60) end
+            feature.nextSend=os.clock()+retry;feature.notifyStatus="Discord rate limit; batch retained"
+        else
+            -- A network error may have delivered the message: pause instead of blindly duplicating it.
+            settings.Webhook=false;feature.notifyStatus="Send failed ("..tostring(code or "network").."). Batch kept; re-enable to retry."
+            refreshUI()
+        end
+    end)
+end
+function feature.changed()
+    if feature.lastFX~=settings.LowFX then feature.lastFX=settings.LowFX;feature.lowFX(settings.LowFX) end
+    if feature.lastNotify~=settings.Webhook then
+        if settings.Webhook and not feature.validURL(feature.url) then
+            settings.Webhook=false;feature.notifyStatus="Paste a valid Discord webhook URL first"
+        elseif settings.Webhook then feature.nextSend=os.clock()+300;feature.notifyStatus="Collecting items; next report in 5 minutes"
+        else feature.notifyStatus="Notifications paused; queued items retained" end
+        feature.lastNotify=settings.Webhook
+    end
+    if not settings.Quest then feature.questTarget=nil;feature.questStatus="Quest: OFF" end
+end
+function feature.stop()
+    settings.Quest=false;settings.Summon=false;settings.Webhook=false;settings.LowFX=false;
+    feature.questTarget=nil
+    feature.lowFX(false)
+    feature.lastFX=false;feature.lastNotify=false
+    feature.questStatus="Quest: OFF";feature.notifyStatus="Notifications paused"
+end
+function feature.initialize()
+    for _,entry in ipairs({{"MissionData","missions"},{"ItemData","items"}}) do
+        task.spawn(function()
+            local module=RS:FindFirstChild(entry[1])
+            if module and module:IsA("ModuleScript") then
+                local ok,result=pcall(require,module)
+                if alive and ok and type(result)=="table" then feature[entry[2]]=result end
+            end
+        end)
+    end
+    for _,container in ipairs({workspace,feature.lighting}) do
+        connect(container.DescendantAdded,function(object) if alive then feature.effect(object) end end)
+    end
+    feature.hooks={}
+    function feature.hookRemotes()
+        local inv=RS:FindFirstChild("InventoryRemote")
+        if inv and inv:IsA("RemoteEvent") and not feature.hooks[inv] then
+            feature.hooks[inv]=true;feature.inventoryReady=false
+            connect(inv.OnClientEvent,feature.inventoryEvent)
+            inv:FireServer("RequestSync")
+        end
+        local folder=RS:FindFirstChild("GachaRemotes")
+        for _,name in ipairs({"GachaResult","GachaNotice"}) do
+            local event=folder and folder:FindFirstChild(name)
+            if event and event:IsA("RemoteEvent") and not feature.hooks[event] then
+                feature.hooks[event]=true
+                if name=="GachaResult" then
+                    feature.rollHooked=true
+                    connect(event.OnClientEvent,function()
+                        if feature.rollPending then feature.rollPending=nil;feature.nextRoll=os.clock()+2;summonStatus="Roll received; waiting for reveal" end
+                    end)
+                else connect(event.OnClientEvent,function(message)
+                    if settings.Summon then settings.Summon=false;feature.rollPending=nil;summonStatus="Summon paused: "..tostring(message):sub(1,150);refreshUI() end
+                end) end
+            end
+        end
+    end
+    feature.hookRemotes()
+    feature.folderHooks={}
+    function feature.watchFolders()
+        for _,name in ipairs({"GearInventory","CompanionInventory"}) do
+            local folder=player:FindFirstChild(name)
+            if folder and not feature.folderHooks[folder] then
+                feature.folderHooks[folder]=true
+                local readyAt=os.clock()+3
+                connect(folder.ChildAdded,function(child)
+                    local record=settings.Webhook and os.clock()>=readyAt
+                    task.delay(0.2,function()
+                        if alive and record and child.Parent==folder and child:IsA("StringValue") then
+                            feature.addItem((name=="GearInventory" and "Gear: " or "Unit: ")..child.Value,1)
+                        end
+                    end)
+                end)
+            end
+        end
+    end
+    feature.watchFolders()
+    local timer=0
+    connect(Run.Heartbeat,function(dt)
+        if not alive then return end
+        timer=timer+dt;if timer<1 then return end;timer=0
+        local ok=pcall(function()
+            feature.hookRemotes();feature.watchFolders()
+            if settings.Webhook and os.clock()>=feature.nextSend then feature.send(false) end
+            if settings.LowFX then for object in pairs(feature.effects) do if object.Parent and object.Enabled then object.Enabled=false end end end
+        end)
+        if not ok then feature.notifyStatus="Background feature error; check game compatibility" end
+    end)
+end
+
+feature.configFile="KrittaxHub-config-v1.json"
+feature.configName="Default"
+feature.configStatus="Configs: ready"
+feature.configDB={version=1,profiles={},autoload=""}
+feature.configSchema={}
+for key,value in pairs(settings) do
+    if key~="Webhook" then feature.configSchema[key]=type(value) end
+end
+function feature.readConfigs()
+    if type(readfile)~="function" or type(writefile)~="function" or type(isfile)~="function" then
+        feature.configStatus="Executor file APIs unavailable";return false
+    end
+    local ok,result=pcall(function()
+        if not isfile(feature.configFile) then return {version=1,profiles={},autoload=""} end
+        return feature.http:JSONDecode(readfile(feature.configFile))
+    end)
+    if not ok or type(result)~="table" or result.version~=1 or type(result.profiles)~="table" then
+        feature.configStatus="Config file invalid; not overwritten";return false
+    end
+    feature.configDB=result;return true
+end
+function feature.writeConfigs(db)
+    local ok=pcall(function() writefile(feature.configFile,feature.http:JSONEncode(db)) end)
+    if not ok then feature.configStatus="Could not save config file";return false end
+    feature.configDB=db;return true
+end
+function feature.cleanConfig(source)
+    if type(source)~="table" then return nil end
+    local out={}
+    local enums={Method={Tween=true,Warp=true},Position={Behind=true,Front=true,Above=true,Under=true},Priority={["Farm > Gate"]=true,["Gate > Farm"]=true}}
+    local ranges={Speed={50,100},Distance={2,20},WalkSpeed={0,150},JumpPower={0,200}}
+    for key,kind in pairs(feature.configSchema) do
+        local value=source[key]
+        if type(value)==kind then
+            if kind=="boolean" then out[key]=value
+            elseif kind=="string" and #value<=100 and (not enums[key] or enums[key][value]) then out[key]=value
+            elseif kind=="number" and ranges[key] and value==value then out[key]=math.clamp(value,ranges[key][1],ranges[key][2])
+            elseif kind=="table" then
+                out[key]={};local count=0
+                for name,enabled in pairs(value) do
+                    if type(name)=="string" and #name<=100 and type(enabled)=="boolean" and count<100 then out[key][name]=enabled;count=count+1 end
+                end
+            end
+        end
+    end
+    return out
+end
+function feature.saveConfig()
+    local name=feature.configName
+    if type(name)~="string" or not name:match("^[%w _%-]+$") or #name>40 then feature.configStatus="Name: 1-40 letters, numbers, spaces, _ or -";return end
+    if not feature.readConfigs() then return end
+    local db=feature.configDB
+    db.profiles[name]=feature.cleanConfig(settings)
+    if feature.writeConfigs(db) then feature.configStatus="Saved: "..name end
+end
+function feature.loadConfig(name)
+    if not feature.readConfigs() then return end
+    local values=feature.cleanConfig(feature.configDB.profiles[name])
+    if not values then feature.configStatus="Config not found: "..tostring(name);return end
+    stop()
+    for key,value in pairs(values) do settings[key]=value end
+    feature.configName=name;feature.changed();applyPlayer();refreshUI()
+    feature.configStatus="Loaded: "..name
+end
+function feature.setAutoload(enabled)
+    if not feature.readConfigs() then return end
+    local db=feature.configDB
+    if enabled and not db.profiles[feature.configName] then feature.configStatus="Save this config first";return end
+    db.autoload=enabled and feature.configName or ""
+    if feature.writeConfigs(db) then feature.configStatus=enabled and ("Autoload: "..feature.configName) or "Autoload disabled" end
+end
+feature.bossCompleted=setmetatable({},{__mode="k"})
+function feature.bossLimit(boss)
+    if not boss then return false end
+    if feature.bossCompleted[boss] then return true end
+    local damage=tonumber(player:GetAttribute("WorldBossDamage"))
+    if damage and damage>=20000000 then feature.bossCompleted[boss]=true;return true end
+    return false
+end
+
 -- Compact sidebar UI inspired by the user's reference.
 report("3/6 UI helpers")
 local function make(class,parent,props)
@@ -454,7 +864,6 @@ local title=text(window,"Autofarm",UDim2.fromOffset(168,12),UDim2.fromOffset(395
 local subtitle=text(window,"Combat and farming features",UDim2.fromOffset(168,36),UDim2.fromOffset(390,18),10);subtitle.TextColor3=muted
 make("Frame",window,{Position=UDim2.fromOffset(168,60),Size=UDim2.fromOffset(476,1),BackgroundColor3=Color3.fromRGB(35,35,39),BorderSizePixel=0})
 make("Frame",window,{Position=UDim2.fromOffset(168,60),Size=UDim2.fromOffset(146,2),BackgroundColor3=purple,BorderSizePixel=0})
-local refreshUI
 local reopen=button(gui,"K HUB",UDim2.fromOffset(14,80),UDim2.fromOffset(68,30),function() window.Visible=not window.Visible end);reopen.BackgroundColor3=purple
 button(window,"-",UDim2.fromOffset(600,15),UDim2.fromOffset(20,22),function() window.Visible=false end)
 button(window,"x",UDim2.fromOffset(625,15),UDim2.fromOffset(20,22),function() hub.Destroy() end)
@@ -462,7 +871,7 @@ local pages,nav,updates={},{},{}
 local popup
 local function closePopup() if popup then popup:Destroy();popup=nil end end
 local antiAFKPulse
-local function changed() target=nil;arrival=nil;cancelPrompt();release();applyPlayer();refreshUI();if settings.AntiAFK and antiAFKPulse then antiAFKPulse() end end
+local function changed() target=nil;arrival=nil;cancelPrompt();release();applyPlayer();feature.changed();refreshUI();if settings.AntiAFK and antiAFKPulse then antiAFKPulse() end end
 local activePage="Autofarm"
 local function showPage(name)
     closePopup();activePage=name
@@ -470,20 +879,20 @@ local function showPage(name)
     for key,b in pairs(nav) do b.BackgroundTransparency=key==name and 0 or 1;b.TextColor3=key==name and Color3.new(1,1,1) or muted end
     title.Text=name
     local descriptions={Autofarm="Combat and farming features",Movement="Follow position and travel controls",Gate="World gate and priority settings",Settings="Session controls and shortcuts"}
-    subtitle.Text=descriptions[name]
+    subtitle.Text=descriptions[name] or ({Quest="Mission Board quests and target progress",Summon="Normal summon x1",Configs="Saved profiles and startup selection",Notify="Discord item summaries every 5 minutes",Performance="Reduce effects on this device"})[name] or ""
 end
 local function category(label,y)
     text(sidebar,label,UDim2.fromOffset(18,y),UDim2.fromOffset(120,20),10)
     make("Frame",sidebar,{Position=UDim2.fromOffset(15,y+25),Size=UDim2.fromOffset(120,1),BackgroundColor3=Color3.fromRGB(33,33,37),BorderSizePixel=0})
 end
-category("Main",72);category("Player",159);category("Misc",245)
-for _,spec in ipairs({{"Autofarm",105,"  +   Autofarm"},{"Movement",192,"  >   Movement"},{"Gate",278,"  #   World Gate"},{"Settings",312,"  :   Settings"}}) do
+category("CONTROLS",67)
+for _,spec in ipairs({{"Autofarm",100,"  +   Autofarm"},{"Quest",134,"  >   Auto Quest"},{"Gate",168,"  #   World Events"},{"Summon",202,"  *   Summon"},{"Movement",236,"  >   Movement"},{"Notify",270,"  @   Notifications"},{"Performance",304,"  ~   Performance"},{"Settings",338,"  :   Settings"},{"Configs",372,"  :   Configs"}}) do
     local name=spec[1]
     pages[name]=make("Frame",window,{Position=UDim2.fromOffset(168,74),Size=UDim2.fromOffset(476,306),BackgroundTransparency=1,Visible=false})
     local b=button(sidebar,spec[3],UDim2.fromOffset(15,spec[2]),UDim2.fromOffset(121,27),function() showPage(name) end)
     b.TextXAlignment=Enum.TextXAlignment.Left;b.BackgroundColor3=purple;nav[name]=b
 end
-text(sidebar,"V1 / CUSTOM UI",UDim2.fromOffset(17,389),UDim2.fromOffset(125,17),9).TextColor3=muted
+text(sidebar,"V1.5 / ANDROID",UDim2.fromOffset(17,408),UDim2.fromOffset(125,17),9).TextColor3=muted
 local function card(page,label,x,y,h)
     local c=make("Frame",pages[page],{Position=UDim2.fromOffset(x,y),Size=UDim2.fromOffset(232,h),BackgroundColor3=Color3.fromRGB(17,17,19),BorderSizePixel=0})
     corner(c,7);stroke(c)
@@ -508,7 +917,7 @@ local function choices(key)
     else
         add("Ninja Zone")
         for _,id in ipairs({"PirateZone","JujutsuZone","HXHZone","GrimoreZone","SinsZone"}) do add(id) end
-        if key=="SummonWorld" then values={"Ninja Zone"};seen={All=true,["Ninja Zone"]=true};for _,id in ipairs({"PirateZone","JujutsuZone","HXHZone","GrimoreZone","SinsZone"}) do add(id) end end
+        if key=="SummonWorld" or key=="QuestWorld" then values={"Ninja Zone"};seen={All=true,["Ninja Zone"]=true};for _,id in ipairs({"PirateZone","JujutsuZone","HXHZone","GrimoreZone","SinsZone"}) do add(id) end end
         if zones and type(zones.Zones)=="table" then for _,z in pairs(zones.Zones) do if type(z)=="table" then add(z.id) end end end
         for _,m in ipairs(workspace:GetChildren()) do if m.Name=="WorldGate" then add(zoneOf(m)) end end
     end
@@ -610,12 +1019,80 @@ toggle(gatePage,"Auto gate","Gate",39);toggle(gatePage,"Interrupt farm for Gate"
 picker(gatePage,"Gate worlds","GateWorlds",135);picker(gatePage,"Boss worlds","BossWorlds",169);picker(gatePage,"Priority","Priority",207,{"Farm > Gate","Gate > Farm"})
 local teamCard=card("Movement","+  Team on arrival",0,204,94)
 toggle(teamCard,"Unequip / Equip Best","Reequip",39)
-local summonCard=card("Gate","+  Auto Summon",244,0,298)
+local summonCard=card("Summon","+  Auto Summon",244,0,298)
 picker(summonCard,"Summon world","SummonWorld",39)
-button(summonCard,"Start auto summon",UDim2.fromOffset(10,80),UDim2.fromOffset(212,28),function() summonCancel=false;summonRequest("Start") end)
-button(summonCard,"Stop auto summon",UDim2.fromOffset(10,115),UDim2.fromOffset(212,28),function() summonCancel=true;summonRequest("Stop") end)
+button(summonCard,"Start auto summon",UDim2.fromOffset(10,80),UDim2.fromOffset(212,28),function() summonRequest("Start") end)
+button(summonCard,"Stop auto summon",UDim2.fromOffset(10,115),UDim2.fromOffset(212,28),function() summonRequest("Stop") end)
 local summonLabel=text(summonCard,summonStatus,UDim2.fromOffset(10,155),UDim2.fromOffset(212,66),10);summonLabel.TextWrapped=true
-local costNote=text(summonCard,"Uses game currency. Server rules and existing Auto Sell settings apply.",UDim2.fromOffset(10,234),UDim2.fromOffset(212,52),10);costNote.TextWrapped=true
+local costNote=text(summonCard,"Normal x1 uses game currency. Farm / Quest pauses while summoning. Auto Sell settings still apply.",UDim2.fromOffset(10,234),UDim2.fromOffset(212,52),10);costNote.TextWrapped=true
+do
+    local q=card("Quest","+  Auto Quest",0,0,298)
+    toggle(q,"Accept + fight + claim","Quest",42)
+    picker(q,"Quest world","QuestWorld",82)
+    local note=text(q,"Mission Board kill quests. Finishes your active quest first, then accepts the next available quest in the selected world.",UDim2.fromOffset(10,132),UDim2.fromOffset(212,132),11);note.TextWrapped=true
+    local progress=card("Quest",">  Quest Progress",244,0,298)
+    feature.questLabel=text(progress,"Quest: OFF",UDim2.fromOffset(10,45),UDim2.fromOffset(212,140),12);feature.questLabel.TextWrapped=true
+    local hint=text(progress,"World Boss / Gate may interrupt. Quest resumes afterwards. Locked quests and bounty cooldowns follow game rules.",UDim2.fromOffset(10,195),UDim2.fromOffset(212,85),10);hint.TextWrapped=true;hint.TextColor3=muted
+    local reveal=card("Summon",">  Normal Summon",244,0,298)
+
+    local info=text(reveal,"No Auto Summon gamepass is needed for repeated normal x1 requests.\n\nA server notice pauses summoning so you can check currency or bag capacity.",UDim2.fromOffset(10,82),UDim2.fromOffset(212,198),11);info.TextWrapped=true
+    local n=card("Notify","@  Discord Webhook",0,0,298)
+    text(n,"Webhook URL",UDim2.fromOffset(10,40),UDim2.fromOffset(212,22),11)
+    local box=make("TextBox",n,{Position=UDim2.fromOffset(10,68),Size=UDim2.fromOffset(212,38),Text="",PlaceholderText="Paste Discord webhook URL",TextColor3=Color3.new(1,1,1),PlaceholderColor3=muted,BackgroundColor3=gray,BorderSizePixel=0,Font=Enum.Font.Gotham,TextSize=10,ClearTextOnFocus=false,TextTruncate=Enum.TextTruncate.AtEnd})
+    corner(box,5)
+    connect(box.Focused,function() box.Text=feature.url end)
+    connect(box.FocusLost,function()
+        local value=box.Text:match("^%s*(.-)%s*$") or ""
+        if value=="URL saved (tap to edit)" then return end
+        if feature.sending then box.Text="URL saved (tap to edit)";feature.notifyStatus="Wait for current send before changing URL";return end
+        if value=="" or feature.validURL(value) then
+            feature.url=value;settings.Webhook=false;feature.lastNotify=false
+            box.Text=value~="" and "URL saved (tap to edit)" or ""
+            feature.notifyStatus=value~="" and "URL saved; enable reports to start" or "Webhook cleared"
+        else feature.url="";settings.Webhook=false;feature.lastNotify=false;feature.notifyStatus="Invalid URL: use https://discord.com/api/webhooks/...";box.Text="" end
+        refreshUI()
+    end)
+    toggle(n,"Send every 5 minutes","Webhook",119)
+    button(n,"Send test message",UDim2.fromOffset(10,159),UDim2.fromOffset(212,30),function()
+        if settings.Webhook then feature.send(true) else feature.notifyStatus="Enable reports before sending a test" end
+    end)
+    local privacy=text(n,"URL stays in this session only. Sends item names + counts, without player details. Existing items are not reported.",UDim2.fromOffset(10,204),UDim2.fromOffset(212,75),10);privacy.TextWrapped=true;privacy.TextColor3=muted
+    local log=card("Notify",">  Delivery Status",244,0,298)
+    feature.notifyLabel=text(log,"Notifications: OFF",UDim2.fromOffset(10,43),UDim2.fromOffset(212,150),11);feature.notifyLabel.TextWrapped=true
+    local caption=text(log,"Tracks material increases, new gear and new units. Auto-sold units are not counted as inventory gains. Failed batches stay queued.",UDim2.fromOffset(10,201),UDim2.fromOffset(212,83),10);caption.TextWrapped=true;caption.TextColor3=muted
+    local fx=card("Performance","~  Local Effects",0,0,298)
+    toggle(fx,"Reduce effects","LowFX",42)
+    local desc=text(fx,"Hides particles, trails, beams, smoke, fire, bloom and blur on this device.\n\nOriginal settings are restored when disabled or unloaded.\n\nDoes not remove enemies, attack hitboxes or map parts.",UDim2.fromOffset(10,87),UDim2.fromOffset(212,191),11);desc.TextWrapped=true
+    local fxStatus=card("Performance",">  Device Status",244,0,298)
+    feature.fxLabel=text(fxStatus,"Effects: normal",UDim2.fromOffset(10,43),UDim2.fromOffset(212,130),12);feature.fxLabel.TextWrapped=true
+    button(fxStatus,"Restore effects",UDim2.fromOffset(10,211),UDim2.fromOffset(212,30),function() settings.LowFX=false;feature.changed();refreshUI() end)
+end
+do
+    local c=card("Configs",":  Profiles",0,0,298)
+    local name=make("TextBox",c,{Position=UDim2.fromOffset(10,42),Size=UDim2.fromOffset(212,30),Text="Default",PlaceholderText="Config name",ClearTextOnFocus=false,TextSize=12,Font=Enum.Font.Gotham,TextColor3=Color3.new(1,1,1),BackgroundColor3=gray,BorderSizePixel=0})
+    corner(name,5)
+    connect(name.FocusLost,function() feature.configName=name.Text:match("^%s*(.-)%s*$") end)
+    button(c,"Save config",UDim2.fromOffset(10,84),UDim2.fromOffset(212,28),function() feature.configName=name.Text:match("^%s*(.-)%s*$");feature.saveConfig() end)
+    button(c,"Select config",UDim2.fromOffset(10,122),UDim2.fromOffset(212,28),function()
+        if not feature.readConfigs() then return end
+        closePopup()
+        popup=make("Frame",window,{Position=UDim2.fromOffset(210,85),Size=UDim2.fromOffset(360,280),BackgroundColor3=gray,BorderSizePixel=0,ZIndex=20});corner(popup,7)
+        local x=button(popup,"Close",UDim2.fromOffset(280,8),UDim2.fromOffset(70,25),closePopup);x.ZIndex=22
+        local list=make("ScrollingFrame",popup,{Position=UDim2.fromOffset(10,42),Size=UDim2.fromOffset(340,228),BackgroundTransparency=1,CanvasSize=UDim2.new(),AutomaticCanvasSize=Enum.AutomaticSize.Y,ScrollBarThickness=4,ZIndex=21})
+        make("UIListLayout",list,{Padding=UDim.new(0,5),SortOrder=Enum.SortOrder.LayoutOrder})
+        local names={};for key in pairs(feature.configDB.profiles) do if type(key)=="string" then table.insert(names,key) end end;table.sort(names)
+        for i,key in ipairs(names) do
+            local b=button(list,key,UDim2.new(),UDim2.new(1,-8,0,32),function() feature.configName=key;name.Text=key;closePopup();feature.configStatus="Selected: "..key.." - press Load" end);b.ZIndex=22;b.LayoutOrder=i
+        end
+        if #names==0 then feature.configStatus="No saved configs yet" end
+    end)
+    button(c,"Load selected config",UDim2.fromOffset(10,160),UDim2.fromOffset(212,28),function() feature.loadConfig(feature.configName);name.Text=feature.configName end)
+    button(c,"Set selected as autoload",UDim2.fromOffset(10,198),UDim2.fromOffset(212,28),function() feature.setAutoload(true) end)
+    button(c,"Disable autoload",UDim2.fromOffset(10,236),UDim2.fromOffset(212,28),function() feature.setAutoload(false) end)
+    local info=card("Configs",">  Config Status",244,0,298)
+    feature.configLabel=text(info,"Ready",UDim2.fromOffset(10,42),UDim2.fromOffset(212,140),11);feature.configLabel.TextWrapped=true
+    local note=text(info,"Load restores saved toggles and may start farming. Autoload applies when you run HUB. Discord URL and sending are never saved.",UDim2.fromOffset(10,190),UDim2.fromOffset(212,90),10);note.TextWrapped=true
+end
 local session=card("Settings",":  Session",0,0,153)
 button(session,"Stop all",UDim2.fromOffset(11,43),UDim2.fromOffset(210,30),function() stop();refreshUI() end)
 button(session,"Hide window",UDim2.fromOffset(11,80),UDim2.fromOffset(210,25),function() window.Visible=false end)
@@ -723,15 +1200,23 @@ local accumulator,uiTime=0,0
 connect(Run.Heartbeat,function(dt)
     if not alive then return end
     uiTime=uiTime+dt;accumulator=accumulator+dt
-    if uiTime>=0.3 then uiTime=0;statusLabel.Text=status;summonLabel.Text=summonStatus;resize() end
+    if uiTime>=0.3 then uiTime=0;statusLabel.Text=status;summonLabel.Text=summonStatus
+        feature.questLabel.Text=feature.questStatus
+        feature.configLabel.Text=feature.configStatus.."\n\nSelected: "..feature.configName.."\nAutoload: "..tostring(feature.configDB.autoload or "")
+        local count=0;for _,n in pairs(feature.pending) do count=count+n end
+        feature.notifyLabel.Text=feature.notifyStatus.."\n\nQueued: "..tostring(count).." items"..(settings.Webhook and ("\nNext report: "..tostring(math.max(0,math.ceil(feature.nextSend-os.clock()))).."s") or "")
+        local hidden=0;for _ in pairs(feature.effects) do hidden=hidden+1 end
+        feature.fxLabel.Text=settings.LowFX and ("Reduced effects: ON\n\nTracked: "..tostring(hidden).." effects") or "Effects: normal"
+        resize() end
     if accumulator<0.05 then return end
     local elapsed=accumulator;accumulator=0
     local ok,err=pcall(function()
-        if not settings.Farm and not settings.Gate and not settings.WorldBoss then
+        if not settings.Farm and not settings.Gate and not settings.WorldBoss and not settings.Quest and not settings.Summon then
             excursion,activeBoss,activeGate=nil,nil,nil;release();return
         end
         local r=root()
         if not r then target=nil;release();status="Waiting for respawn";return end
+        if feature.summonStep(r,elapsed) then return end
         local function beginEvent()
             if settings.Farm and not excursion then
                 excursion={root=r,position=r.CFrame,target=target,started=os.clock()}
@@ -739,13 +1224,16 @@ connect(Run.Heartbeat,function(dt)
             if excursion then excursion.returnStarted=nil end
             target=nil
         end
+        if activeBoss and feature.bossLimit(activeBoss) then
+            release();arrival=nil;activeBoss=nil;status="World Boss: 20M reached - resuming other tasks"
+        end
         if not settings.WorldBoss or not validEnemy(activeBoss) or not eventWorldMatches(activeBoss,"BossWorlds") then activeBoss=nil end
         if settings.WorldBoss and not activeBoss then activeBoss=chooseWorldBoss(r) end
         if activeBoss then
             beginEvent();cancelPrompt()
             if activeGate then gateStarted=os.clock() end
             fight(r,activeBoss,elapsed)
-            status="World Boss: "..activeBoss.Name
+            status="World Boss: "..activeBoss.Name.." | "..string.format("%.1f",(tonumber(player:GetAttribute("WorldBossDamage")) or 0)/1000000).." / 20M"
             return
         end
         if not settings.Gate or not gateAlive(activeGate) then
@@ -791,23 +1279,31 @@ connect(Run.Heartbeat,function(dt)
                 excursion=nil
             end
         end
+        if feature.questStep(r,elapsed) then return end
         if settings.Farm and target then fight(r,target,elapsed);return end
         release();status="Waiting for selected enemies / World Boss / Gate"
     end)
     if not ok then stop();status="Stopped: "..tostring(err);warn("[Krittax HUB] "..tostring(err));refreshUI() end
 end)
+task.defer(function()
+    if feature.readConfigs() and type(feature.configDB.autoload)=="string" and feature.configDB.autoload~="" then feature.loadConfig(feature.configDB.autoload) end
+end)
 task.defer(loadGameData)
-print("[Krittax HUB V1.1] Loaded. Autofarm and Gate are OFF. PlaceId="..tostring(game.PlaceId))
+task.defer(function()
+    local ok=pcall(feature.initialize)
+    if not ok then feature.notifyStatus="Feature initialization failed; rejoin and retry" end
+end)
+print("[Krittax HUB V1.5] Loaded. Autofarm and Gate are OFF. PlaceId="..tostring(game.PlaceId))
 
 
 end
 startKrittaxHub()
 
 ]====]
--- END OF PAYLOAD: KRITTAX_ANDROID_13_COMPLETE
+-- END OF PAYLOAD: KRITTAX_ANDROID_15_COMPLETE
 report("Compiling full script...")
 if type(loadstring)~="function" then report("ERROR: loadstring is unavailable");return end
-local compiled,fn,compileError=pcall(loadstring,payload,"KrittaxAndroid13")
+local compiled,fn,compileError=pcall(loadstring,payload,"KrittaxAndroid15")
 if not compiled or type(fn)~="function" then report("COMPILE ERROR: "..tostring(compileError or fn));return end
 local ok,err=pcall(fn,report)
 if not ok then
@@ -816,4 +1312,4 @@ else
     report("GUI loaded. Closing this panel in 3 seconds.")
     task.delay(3,function()panel:Destroy()end)
 end
--- KRITTAX_ANDROID_13_END
+-- KRITTAX_ANDROID_15_END
