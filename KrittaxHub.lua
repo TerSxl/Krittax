@@ -16,6 +16,9 @@ local hub = {}
 env.KrittaxHub = hub
 local settings = {Farm=false, Gate=false, Enemy="All", World="All", Method="Tween", Speed=75, Position="Behind", Distance=5, Priority="Farm > Gate"}
 hub.Settings = settings
+settings.AntiAFK, settings.Noclip = false, false
+settings.SpeedEnabled, settings.JumpEnabled = false, false
+settings.WalkSpeed, settings.JumpPower = 32, 75
 local alive, target, commanded, lastAttack, lastGate = true, nil, nil, 0, 0
 local connections, gateAttempts = {}, setmetatable({}, {__mode="k"})
 local pendingPrompt
@@ -45,6 +48,42 @@ local function root()
     local part = character and character:FindFirstChild("HumanoidRootPart")
     if humanoid and humanoid.Health > 0 and part and part:IsA("BasePart") then return part end
 end
+-- Player modifiers keep independent snapshots so disabling one does not reset another.
+local speedSaved, jumpSaved, collisionSaved = {}, {}, {}
+local function restoreEntries(saved)
+    for instance,properties in pairs(saved) do
+        for property,value in pairs(properties) do pcall(function() instance[property]=value end) end
+        saved[instance]=nil
+    end
+end
+local function restorePlayer()
+    restoreEntries(speedSaved);restoreEntries(jumpSaved);restoreEntries(collisionSaved)
+end
+local function applyPlayer()
+    if not settings.SpeedEnabled then restoreEntries(speedSaved) end
+    if not settings.JumpEnabled then restoreEntries(jumpSaved) end
+    if not settings.Noclip then restoreEntries(collisionSaved) end
+    local character=player.Character
+    local humanoid=character and character:FindFirstChildOfClass("Humanoid")
+    if not humanoid or humanoid.Health<=0 then restorePlayer();return end
+    if settings.SpeedEnabled then
+        if not speedSaved[humanoid] then speedSaved[humanoid]={WalkSpeed=humanoid.WalkSpeed} end
+        humanoid.WalkSpeed=math.clamp(tonumber(settings.WalkSpeed) or 32,0,150)
+    end
+    if settings.JumpEnabled then
+        if not jumpSaved[humanoid] then jumpSaved[humanoid]={UseJumpPower=humanoid.UseJumpPower,JumpPower=humanoid.JumpPower} end
+        humanoid.UseJumpPower=true
+        humanoid.JumpPower=math.clamp(tonumber(settings.JumpPower) or 75,0,200)
+    end
+    if settings.Noclip then
+        for _,part in ipairs(character:GetDescendants()) do
+            if part:IsA("BasePart") then
+                if not collisionSaved[part] then collisionSaved[part]={CanCollide=part.CanCollide} end
+                part.CanCollide=false
+            end
+        end
+    end
+end
 local function remote()
     local r = RS:FindFirstChild("AttackCommand")
     if r and r:IsA("RemoteEvent") then return r end
@@ -59,6 +98,8 @@ local function release()
 end
 local function stop()
     settings.Farm, settings.Gate = false, false
+    settings.AntiAFK,settings.Noclip,settings.SpeedEnabled,settings.JumpEnabled=false,false,false,false
+    restorePlayer()
     target = nil
     cancelPrompt()
     release()
@@ -262,6 +303,7 @@ local pages,nav,updates={},{},{}
 local popup
 local function closePopup() if popup then popup:Destroy();popup=nil end end
 local function changed() target=nil;cancelPrompt();release();refreshUI() end
+local function changed() target=nil;cancelPrompt();release();applyPlayer();refreshUI() end
 local activePage="Autofarm"
 local function showPage(name)
     closePopup();activePage=name
@@ -368,6 +410,14 @@ picker(travel,"Position","Position",121,{"Behind","Above","Front","Under"})
 slider(travel,"Distance","Distance",2,20,151," studs")
 local notes=card("Movement",":  Position",244,0,192)
 local note=text(notes,"Behind / Front\nStand behind or in front of target.\n\nAbove / Under\nMove above or below target.\n\nSpeed applies to Tween mode.",UDim2.fromOffset(11,43),UDim2.fromOffset(208,138),10);note.TextColor3=muted;note.TextWrapped=true;note.TextYAlignment=Enum.TextYAlignment.Top
+local modifiers=card("Movement",":  Player",244,0,298)
+toggle(modifiers,"Custom walk speed","SpeedEnabled",39)
+slider(modifiers,"Walk speed","WalkSpeed",0,150,71," / 150")
+toggle(modifiers,"Custom jump power","JumpEnabled",114)
+slider(modifiers,"Jump power","JumpPower",0,200,146," / 200")
+toggle(modifiers,"Noclip","Noclip",190)
+toggle(modifiers,"Anti-AFK","AntiAFK",222)
+local note=text(modifiers,"Player only / all switches start OFF",UDim2.fromOffset(10,263),UDim2.fromOffset(212,20),9);note.TextColor3=muted
 local gatePage=card("Gate","#  World Gate",0,0,153)
 toggle(gatePage,"Auto gate","Gate",39);picker(gatePage,"World / zone","World",73);picker(gatePage,"Priority","Priority",109,{"Farm > Gate","Gate > Farm"})
 local gateNote=card("Gate",":  Gate Status",244,0,153)
@@ -405,6 +455,31 @@ connect(Input.InputBegan,function(input,processed)
     elseif input.KeyCode==Enum.KeyCode.End then stop();refreshUI() end
 end)
 connect(player.CharacterRemoving,function() target=nil;cancelPrompt();release() end)
+connect(player.CharacterRemoving,function() target=nil;cancelPrompt();release();restorePlayer() end)
+connect(Run.Stepped,function()
+    if not alive then return end
+    local ok,err=pcall(applyPlayer)
+    if not ok then
+        settings.SpeedEnabled,settings.JumpEnabled,settings.Noclip=false,false,false
+        restorePlayer();status="Player controls stopped: "..tostring(err);refreshUI()
+    end
+end)
+local lastIdleInput=-math.huge
+connect(player.Idled,function()
+    if not alive or not settings.AntiAFK or os.clock()-lastIdleInput<30 then return end
+    lastIdleInput=os.clock()
+    local ok,err=pcall(function()
+        local virtualUser=game:GetService("VirtualUser")
+        virtualUser:CaptureController()
+        local camera=workspace.CurrentCamera
+        virtualUser:ClickButton2(Vector2.new(0,0),camera and camera.CFrame or CFrame.new())
+    end)
+    if not ok then
+        settings.AntiAFK=false
+        status="Anti-AFK unavailable in this executor"
+        warn("[Krittax HUB] Anti-AFK: "..tostring(err));refreshUI()
+    end
+end)
 function hub.Destroy()
     if not alive then return end
     alive=false;stop()
@@ -440,4 +515,3 @@ connect(Run.Heartbeat,function(dt)
     if not ok then stop();status="Stopped: "..tostring(err);warn("[Krittax HUB] "..tostring(err));refreshUI() end
 end)
 print("[Krittax HUB V1] Loaded. Autofarm and Gate are OFF. PlaceId="..tostring(game.PlaceId))
-
