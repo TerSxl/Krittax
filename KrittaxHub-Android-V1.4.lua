@@ -1,4 +1,4 @@
--- KRITTAX ANDROID DIAGNOSTIC BUILD 1.5.1 - copy the entire file.
+-- KRITTAX ANDROID DIAGNOSTIC BUILD 1.6 - copy the entire file.
 local player=game:GetService("Players").LocalPlayer
 assert(player,"Join a game first")
 local pg=player:WaitForChild("PlayerGui",10)
@@ -12,8 +12,8 @@ local box=Instance.new("TextBox")
 box.Size=UDim2.new(0.92,0,0.22,0);box.Position=UDim2.new(0.04,0,0.04,0)
 box.BackgroundColor3=Color3.fromRGB(40,20,65);box.TextColor3=Color3.new(1,1,1)
 box.TextSize=15;box.TextWrapped=true;box.MultiLine=true;box.ClearTextOnFocus=false
-box.Text="KRITTAX 1.5.1 - loader started";box.Parent=panel;panel.Parent=pg
-local function report(message) box.Text="KRITTAX 1.5.1\n"..tostring(message);print(box.Text) end
+box.Text="KRITTAX 1.6 - loader started";box.Parent=panel;panel.Parent=pg
+local function report(message) box.Text="KRITTAX 1.6\n"..tostring(message);print(box.Text) end
 local payload=[====[
 local report = ...
 local function startKrittaxHub()
@@ -48,10 +48,8 @@ local settings = {Farm=false, Gate=false, Enemy="All", World="All", Method="Twee
 hub.Settings = settings
 settings.Enemies={All=true}
 settings.GateWorlds={All=true};settings.BossWorlds={All=true}
-settings.Reequip=true;settings.SummonWorld="Ninja Zone"
+settings.Reequip=true;settings.ArrivalTeam="Equip Best"
 local arrival,teamBusy,teamRestore=nil,false,nil
-local summonStatus="Auto Summon: stopped"
-local stopSummon
 settings.WorldBoss,settings.GateInterrupt=false,true
 local excursion,activeBoss,activeGate,gateStarted=nil,nil,nil,0
 settings.AntiAFK, settings.Noclip = false, false
@@ -155,7 +153,6 @@ local function stop()
     if feature.stop then feature.stop() end
     arrival=nil
     if teamRestore then teamRestore() end
-    if stopSummon then stopSummon() end
     excursion,activeBoss,activeGate=nil,nil,nil
     settings.AntiAFK,settings.Noclip,settings.SpeedEnabled,settings.JumpEnabled=false,false,false,false
     restorePlayer()
@@ -258,26 +255,70 @@ local function move(r, destination, dt)
     r.AssemblyLinearVelocity = Vector3.zero
     r.AssemblyAngularVelocity = Vector3.zero
 end
+function feature.readTeams()
+    local value=player:FindFirstChild("TeamPresets")
+    if not value or not value:IsA("StringValue") then return {} end
+    local ok,result=pcall(function() return game:GetService("HttpService"):JSONDecode(value.Value) end)
+    return ok and type(result)=="table" and result or {}
+end
+function feature.teamChoices()
+    local choices={"Equip Best"}
+    for _,preset in ipairs(feature.readTeams()) do
+        if type(preset)=="table" and type(preset.name)=="string" then table.insert(choices,"Team: "..preset.name) end
+    end
+    return choices
+end
+function feature.teamIndex(selected)
+    if selected=="Equip Best" then return nil end
+    local found
+    for index,preset in ipairs(feature.readTeams()) do
+        if type(preset)=="table" and "Team: "..tostring(preset.name)==selected then
+            if found then return nil,"Duplicate team name; rename teams in game" end
+            found=index
+        end
+    end
+    return found,found and nil or "Saved team missing; select it again"
+end
 local function refreshTeam()
     if not settings.Reequip or teamBusy then return end
     local folder=RS:FindFirstChild("GachaRemotes")
     local equip=folder and folder:FindFirstChild("EquipCompanion")
     if not equip or not equip:IsA("RemoteEvent") then status="EquipCompanion missing";return end
+    local selected=settings.ArrivalTeam or "Equip Best"
+    local setup=folder:FindFirstChild("TeamSetup")
+    if selected~="Equip Best" then
+        local index,err=feature.teamIndex(selected)
+        if not index then status=err;return end
+        if not setup or not setup:IsA("RemoteFunction") then status="TeamSetup remote missing";return end
+    end
     teamBusy=true
     local restored=false
     local function restore()
         if restored then return end
         restored=true
-        local ok,err=pcall(function() equip:FireServer("EquipBest") end)
-        teamBusy=false;teamRestore=nil
-        if not ok then warn("[Krittax] EquipBest failed: "..tostring(err)) end
+        task.spawn(function()
+            local ok,accepted,message=pcall(function()
+                if selected=="Equip Best" then equip:FireServer("EquipBest");return true end
+                local index,err=feature.teamIndex(selected)
+                if not index then error(err) end
+                return setup:InvokeServer("LoadPreset",index)
+            end)
+            if not ok or accepted==false then
+                -- Recover a usable team after UnequipAll if a preset was removed or refused.
+                pcall(function() equip:FireServer("EquipBest") end)
+                status="Team Setup failed; restored Equip Best"
+                warn("[Krittax] Team Setup unavailable: "..tostring(message or accepted))
+            end
+            teamBusy=false;teamRestore=nil
+        end)
     end
     teamRestore=restore
-    local ok,err=pcall(function() equip:FireServer("UnequipAll") end)
-    if not ok then restore();status=tostring(err);return end
-    -- Ordered RemoteEvent calls; allow server time to remove the old team.
+    local ok=pcall(function() equip:FireServer("UnequipAll") end)
+    if not ok then teamBusy=false;teamRestore=nil;status="UnequipAll failed";return end
     task.delay(0.4,restore)
+    task.delay(15,function() if alive and teamBusy then status="Team Setup awaiting server response" end end)
 end
+
 local function fight(r,enemy,dt)
     local b=body(enemy)
     if not b then return end
@@ -313,14 +354,6 @@ local function fight(r,enemy,dt)
     if commanded~=enemy or os.clock()-lastAttack>=2 then attack:FireServer(enemy);commanded=enemy;lastAttack=os.clock() end
     status="Holding ground: "..enemy.Name
 end
-local function summonRequest(action)
-    settings.Summon=action=="Start"
-    if settings.Summon then
-        feature.nextRoll=os.clock()+0.5
-        summonStatus="Normal summon: moving to selected shrine"
-    else summonStatus="Auto Summon: stopped" end
-end
-stopSummon=function() summonRequest("Stop") end
 local function gatePosition(gate)
     local cf = gate:GetAttribute("GateCFrame")
     if typeof(cf) == "CFrame" then return cf.Position end
@@ -407,11 +440,10 @@ feature.effects=setmetatable({},{__mode="k"})
 feature.pending={}
 feature.inventory={}
 feature.lastQuest=0
-feature.nextRoll=0
 feature.nextSend=0
 feature.url=""
 settings.Quest=false;settings.QuestWorld="Ninja Zone"
-settings.Summon=false;
+
 settings.Webhook=false;settings.LowFX=false
 
 function feature.zone(world)
@@ -537,39 +569,6 @@ function feature.questStep(r,dt)
     status=feature.questStatus
     return true
 end
-function feature.summonStep(r,dt)
-    if not settings.Summon then return false end
-    release();arrival=nil
-    if feature.rollPending then
-        if os.clock()-feature.rollPending>30 then
-            settings.Summon=false;summonStatus="No roll result after 30s. Check game UI, then Start again."
-            feature.rollPending=nil;refreshUI()
-        end
-        status=summonStatus;return true
-    end
-    if player:GetAttribute("GachaPlaying")==true then summonStatus="Waiting for current reveal to finish";status=summonStatus;return true end
-    local shrine=feature.tagged("GachaShrine",settings.SummonWorld,r)
-    if not shrine then
-        feature.seekZone(r,settings.SummonWorld,dt);summonStatus="Shrine not loaded: travel to "..settings.SummonWorld
-    else
-        local prompt=shrine:FindFirstChild("GachaPrompt",true)
-        local destination=prompt and prompt.Parent or shrine
-        local radius=prompt and math.min(8,math.max(2,prompt.MaxActivationDistance-1)) or 6
-        if not feature.approach(r,destination,dt,radius) then summonStatus="Moving to shrine: "..settings.SummonWorld
-        elseif os.clock()>=feature.nextRoll then
-            local remotes=RS:FindFirstChild("GachaRemotes")
-            local event=remotes and remotes:FindFirstChild("RequestRoll")
-            if not feature.rollHooked or not event or not event:IsA("RemoteEvent") then
-                summonStatus="Waiting for RequestRoll / GachaResult"
-            else
-                feature.nextRoll=os.clock()+2;feature.rollPending=os.clock()
-                summonStatus="Normal summon x1 requested"
-                event:FireServer(1)
-            end
-        end
-    end
-    status=summonStatus;return true
-end
 function feature.effect(object)
     if not settings.LowFX then return end
     if object:IsA("ParticleEmitter") or object:IsA("Trail") or object:IsA("Beam") or object:IsA("Smoke") or object:IsA("Fire") or object:IsA("Sparkles")
@@ -670,7 +669,7 @@ function feature.changed()
     if not settings.Quest then feature.questTarget=nil;feature.questStatus="Quest: OFF" end
 end
 function feature.stop()
-    settings.Quest=false;settings.Summon=false;settings.Webhook=false;settings.LowFX=false;
+    settings.Quest=false;settings.Webhook=false;settings.LowFX=false;
     feature.questTarget=nil
     feature.lowFX(false)
     feature.lastFX=false;feature.lastNotify=false
@@ -696,21 +695,6 @@ function feature.initialize()
             feature.hooks[inv]=true;feature.inventoryReady=false
             connect(inv.OnClientEvent,feature.inventoryEvent)
             inv:FireServer("RequestSync")
-        end
-        local folder=RS:FindFirstChild("GachaRemotes")
-        for _,name in ipairs({"GachaResult","GachaNotice"}) do
-            local event=folder and folder:FindFirstChild(name)
-            if event and event:IsA("RemoteEvent") and not feature.hooks[event] then
-                feature.hooks[event]=true
-                if name=="GachaResult" then
-                    feature.rollHooked=true
-                    connect(event.OnClientEvent,function()
-                        if feature.rollPending then feature.rollPending=nil;feature.nextRoll=os.clock()+2;summonStatus="Roll received; waiting for reveal" end
-                    end)
-                else connect(event.OnClientEvent,function(message)
-                    if settings.Summon then settings.Summon=false;feature.rollPending=nil;summonStatus="Summon paused: "..tostring(message):sub(1,150);refreshUI() end
-                end) end
-            end
         end
     end
     feature.hookRemotes()
@@ -954,20 +938,20 @@ local function showPage(name)
     for key,b in pairs(nav) do b.BackgroundTransparency=key==name and 0 or 1;b.TextColor3=key==name and Color3.new(1,1,1) or muted end
     title.Text=name
     local descriptions={Autofarm="Combat and farming features",Movement="Follow position and travel controls",Gate="World gate and priority settings",Settings="Session controls and shortcuts"}
-    subtitle.Text=descriptions[name] or ({Quest="Mission Board quests and target progress",Summon="Normal summon x1",Configs="Saved profiles and startup selection",Notify="Discord item summaries every 5 minutes",Performance="Reduce effects on this device"})[name] or ""
+    subtitle.Text=descriptions[name] or ({Quest="Mission Board quests and target progress",Configs="Saved profiles and startup selection",Notify="Discord item summaries every 5 minutes",Performance="Reduce effects on this device"})[name] or ""
 end
 local function category(label,y)
     text(sidebar,label,UDim2.fromOffset(18,y),UDim2.fromOffset(120,20),10)
     make("Frame",sidebar,{Position=UDim2.fromOffset(15,y+25),Size=UDim2.fromOffset(120,1),BackgroundColor3=Color3.fromRGB(33,33,37),BorderSizePixel=0})
 end
 category("CONTROLS",67)
-for _,spec in ipairs({{"Autofarm",100,"  +   Autofarm"},{"Quest",134,"  >   Auto Quest"},{"Gate",168,"  #   World Events"},{"Summon",202,"  *   Summon"},{"Movement",236,"  >   Movement"},{"Notify",270,"  @   Notifications"},{"Performance",304,"  ~   Performance"},{"Settings",338,"  :   Settings"},{"Configs",372,"  :   Configs"}}) do
+for _,spec in ipairs({{"Autofarm",100,"  +   Autofarm"},{"Quest",134,"  >   Auto Quest"},{"Gate",168,"  #   World Events"},{"Movement",202,"  >   Movement"},{"Notify",236,"  @   Notifications"},{"Performance",270,"  ~   Performance"},{"Settings",304,"  :   Settings"},{"Configs",338,"  :   Configs"}}) do
     local name=spec[1]
     pages[name]=make("Frame",window,{Position=UDim2.fromOffset(168,74),Size=UDim2.fromOffset(476,306),BackgroundTransparency=1,Visible=false})
     local b=button(sidebar,spec[3],UDim2.fromOffset(15,spec[2]),UDim2.fromOffset(121,27),function() showPage(name) end)
     b.TextXAlignment=Enum.TextXAlignment.Left;b.BackgroundColor3=purple;nav[name]=b
 end
-text(sidebar,"V1.5.1 / ANDROID",UDim2.fromOffset(17,408),UDim2.fromOffset(125,17),9).TextColor3=muted
+text(sidebar,"V1.6 / ANDROID",UDim2.fromOffset(17,408),UDim2.fromOffset(125,17),9).TextColor3=muted
 local function card(page,label,x,y,h)
     local c=make("Frame",pages[page],{Position=UDim2.fromOffset(x,y),Size=UDim2.fromOffset(232,h),BackgroundColor3=Color3.fromRGB(17,17,19),BorderSizePixel=0})
     corner(c,7);stroke(c)
@@ -983,6 +967,7 @@ local function toggle(parent,label,key,y)
     table.insert(updates,function() b.BackgroundColor3=settings[key] and purple or Color3.fromRGB(52,52,57);knob.Position=UDim2.fromOffset(settings[key] and 14 or 2,2) end)
 end
 local function choices(key)
+    if key=="ArrivalTeam" then return feature.teamChoices() end
     local values,seen={"All"},{All=true}
     local function add(v) if type(v)=="string" and v~="" and not seen[v] then seen[v]=true;table.insert(values,v) end end
     if key=="Enemy" then
@@ -992,7 +977,7 @@ local function choices(key)
     else
         add("Ninja Zone")
         for _,id in ipairs({"PirateZone","JujutsuZone","HXHZone","GrimoreZone","SinsZone"}) do add(id) end
-        if key=="SummonWorld" or key=="QuestWorld" then values={"Ninja Zone"};seen={All=true,["Ninja Zone"]=true};for _,id in ipairs({"PirateZone","JujutsuZone","HXHZone","GrimoreZone","SinsZone"}) do add(id) end end
+        if key=="QuestWorld" then values={"Ninja Zone"};seen={All=true,["Ninja Zone"]=true};for _,id in ipairs({"PirateZone","JujutsuZone","HXHZone","GrimoreZone","SinsZone"}) do add(id) end end
         if zones and type(zones.Zones)=="table" then for _,z in pairs(zones.Zones) do if type(z)=="table" then add(z.id) end end end
         for _,m in ipairs(workspace:GetChildren()) do if m.Name=="WorldGate" then add(zoneOf(m)) end end
     end
@@ -1092,14 +1077,10 @@ local note=text(modifiers,"Player only / all switches start OFF",UDim2.fromOffse
 local gatePage=card("Gate","#  World Events",0,0,260)
 toggle(gatePage,"Auto gate","Gate",39);toggle(gatePage,"Interrupt farm for Gate","GateInterrupt",69);toggle(gatePage,"Auto World Boss","WorldBoss",99)
 text(gatePage,"Jullia: all worlds / warp + return",UDim2.fromOffset(10,160),UDim2.fromOffset(212,28),10)
-local teamCard=card("Movement","+  Team on arrival",0,204,94)
-toggle(teamCard,"Unequip / Equip Best","Reequip",39)
-local summonCard=card("Summon","+  Auto Summon",244,0,298)
-picker(summonCard,"Summon world","SummonWorld",39)
-button(summonCard,"Start auto summon",UDim2.fromOffset(10,80),UDim2.fromOffset(212,28),function() summonRequest("Start") end)
-button(summonCard,"Stop auto summon",UDim2.fromOffset(10,115),UDim2.fromOffset(212,28),function() summonRequest("Stop") end)
-local summonLabel=text(summonCard,summonStatus,UDim2.fromOffset(10,155),UDim2.fromOffset(212,66),10);summonLabel.TextWrapped=true
-local costNote=text(summonCard,"Normal x1 uses game currency. Farm / Quest pauses while summoning. Auto Sell settings still apply.",UDim2.fromOffset(10,234),UDim2.fromOffset(212,52),10);costNote.TextWrapped=true
+local teamCard=card("Gate","+  Team on arrival",244,0,260)
+toggle(teamCard,"Re-equip on arrival","Reequip",39)
+picker(teamCard,"Select team","ArrivalTeam",79)
+local teamNote=text(teamCard,"Equip Best or a saved Team Setup. The list refreshes when opened. Applies after reaching an enemy or Jullia.",UDim2.fromOffset(10,125),UDim2.fromOffset(212,110),11);teamNote.TextWrapped=true
 do
     local q=card("Quest","+  Auto Quest",0,0,298)
     toggle(q,"Accept + fight + claim","Quest",42)
@@ -1108,9 +1089,6 @@ do
     local progress=card("Quest",">  Quest Progress",244,0,298)
     feature.questLabel=text(progress,"Quest: OFF",UDim2.fromOffset(10,45),UDim2.fromOffset(212,140),12);feature.questLabel.TextWrapped=true
     local hint=text(progress,"World Boss / Gate may interrupt. Quest resumes afterwards. Locked quests and bounty cooldowns follow game rules.",UDim2.fromOffset(10,195),UDim2.fromOffset(212,85),10);hint.TextWrapped=true;hint.TextColor3=muted
-    local reveal=card("Summon",">  Normal Summon",244,0,298)
-
-    local info=text(reveal,"No Auto Summon gamepass is needed for repeated normal x1 requests.\n\nA server notice pauses summoning so you can check currency or bag capacity.",UDim2.fromOffset(10,82),UDim2.fromOffset(212,198),11);info.TextWrapped=true
     local n=card("Notify","@  Discord Webhook",0,0,298)
     text(n,"Webhook URL",UDim2.fromOffset(10,40),UDim2.fromOffset(212,22),11)
     local box=make("TextBox",n,{Position=UDim2.fromOffset(10,68),Size=UDim2.fromOffset(212,38),Text="",PlaceholderText="Paste Discord webhook URL",TextColor3=Color3.new(1,1,1),PlaceholderColor3=muted,BackgroundColor3=gray,BorderSizePixel=0,Font=Enum.Font.Gotham,TextSize=10,ClearTextOnFocus=false,TextTruncate=Enum.TextTruncate.AtEnd})
@@ -1275,7 +1253,7 @@ local accumulator,uiTime=0,0
 connect(Run.Heartbeat,function(dt)
     if not alive then return end
     uiTime=uiTime+dt;accumulator=accumulator+dt
-    if uiTime>=0.3 then uiTime=0;statusLabel.Text=status;summonLabel.Text=summonStatus
+    if uiTime>=0.3 then uiTime=0;statusLabel.Text=status
         feature.questLabel.Text=feature.questStatus
         feature.configLabel.Text=feature.configStatus.."\n\nSelected: "..feature.configName.."\nAutoload: "..tostring(feature.configDB.autoload or "")
         local count=0;for _,n in pairs(feature.pending) do count=count+n end
@@ -1286,13 +1264,12 @@ connect(Run.Heartbeat,function(dt)
     if accumulator<0.05 then return end
     local elapsed=accumulator;accumulator=0
     local ok,err=pcall(function()
-        if not settings.Farm and not settings.Gate and not settings.WorldBoss and not settings.Quest and not settings.Summon then
+        if not settings.Farm and not settings.Gate and not settings.WorldBoss and not settings.Quest then
             excursion,activeBoss,activeGate=nil,nil,nil;release();return
         end
         local r=root()
         if not r then target=nil;release();status="Waiting for respawn";return end
         if feature.worldBossStep(r,elapsed) then return end
-        if feature.summonStep(r,elapsed) then return end
         local function beginEvent()
             if settings.Farm and not excursion then
                 excursion={root=r,position=r.CFrame,target=target,started=os.clock()}
@@ -1357,17 +1334,17 @@ task.defer(function()
     local ok=pcall(feature.initialize)
     if not ok then feature.notifyStatus="Feature initialization failed; rejoin and retry" end
 end)
-print("[Krittax HUB V1.5.1] Loaded. Autofarm and Gate are OFF. PlaceId="..tostring(game.PlaceId))
+print("[Krittax HUB V1.6] Loaded. Autofarm and Gate are OFF. PlaceId="..tostring(game.PlaceId))
 
 
 end
 startKrittaxHub()
 
 ]====]
--- END OF PAYLOAD: KRITTAX_ANDROID_151_COMPLETE
+-- END OF PAYLOAD: KRITTAX_ANDROID_16_COMPLETE
 report("Compiling full script...")
 if type(loadstring)~="function" then report("ERROR: loadstring is unavailable");return end
-local compiled,fn,compileError=pcall(loadstring,payload,"KrittaxAndroid151")
+local compiled,fn,compileError=pcall(loadstring,payload,"KrittaxAndroid16")
 if not compiled or type(fn)~="function" then report("COMPILE ERROR: "..tostring(compileError or fn));return end
 local ok,err=pcall(fn,report)
 if not ok then
@@ -1376,4 +1353,4 @@ else
     report("GUI loaded. Closing this panel in 3 seconds.")
     task.delay(3,function()panel:Destroy()end)
 end
--- KRITTAX_ANDROID_151_END
+-- KRITTAX_ANDROID_16_END
