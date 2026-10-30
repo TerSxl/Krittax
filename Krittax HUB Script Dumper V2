@@ -1,0 +1,295 @@
+-- KRITTAX HUB SCRIPT DUMPER | GUI v2
+-- For your own / authorized Roblox experience.
+-- Client-visible LocalScripts and ModuleScripts only. Never runs dumped code.
+local Players = game:GetService("Players")
+local UIS = game:GetService("UserInputService")
+local Http = game:GetService("HttpService")
+local player = Players.LocalPlayer
+assert(player, "Run this in the Roblox client")
+local host = player:WaitForChild("PlayerGui")
+local guiName = "KRITTAX HUB SCRIPT DUMPER"
+if host:FindFirstChild(guiName) then
+    warn("KRITTAX HUB SCRIPT DUMPER is already open. Press RightShift to show it.")
+    host[guiName].Enabled = true
+    return
+end
+local C = { bg = Color3.fromRGB(15,15,18), panel = Color3.fromRGB(24,24,29),
+    purple = Color3.fromRGB(156,45,239), text = Color3.fromRGB(237,237,243),
+    muted = Color3.fromRGB(153,153,167), border = Color3.fromRGB(48,48,57) }
+local function new(class, parent, props)
+    local obj = Instance.new(class)
+    for key, value in pairs(props or {}) do obj[key] = value end
+    obj.Parent = parent
+    return obj
+end
+local function round(obj, radius)
+    new("UICorner", obj, {CornerRadius = UDim.new(0, radius or 7)})
+end
+local function label(parent, text, x, y, w, h, size, color)
+    return new("TextLabel", parent, {Text = text, Position = UDim2.fromOffset(x,y),
+        Size = UDim2.fromOffset(w,h), BackgroundTransparency = 1, Font = Enum.Font.Gotham,
+        TextSize = size or 12, TextColor3 = color or C.text, TextXAlignment = Enum.TextXAlignment.Left})
+end
+local function button(parent, text, x, y, w, h, accent)
+    local b = new("TextButton", parent, {Text = text, Position = UDim2.fromOffset(x,y),
+        Size = UDim2.fromOffset(w,h), BackgroundColor3 = accent and C.purple or C.panel,
+        BorderSizePixel = 0, Font = Enum.Font.GothamMedium, TextSize = 12, TextColor3 = C.text})
+    round(b)
+    return b
+end
+local gui = new("ScreenGui", host, {Name = guiName, ResetOnSpawn = false,
+    ZIndexBehavior = Enum.ZIndexBehavior.Sibling, DisplayOrder = 100})
+local frame = new("Frame", gui, {Size = UDim2.fromOffset(620,450),
+    Position = UDim2.new(0.5,-310,0.5,-225), BackgroundColor3 = C.bg, BorderSizePixel = 0})
+round(frame,10)
+new("UIStroke", frame, {Color = C.border, Thickness = 1})
+local scale = new("UIScale", frame)
+local function fit()
+    local camera = workspace.CurrentCamera
+    if camera then scale.Scale = math.min(1, camera.ViewportSize.X / 650, camera.ViewportSize.Y / 480) end
+end
+fit()
+local title = label(frame,"KRITTAX HUB SCRIPT DUMPER",16,10,420,25,15)
+local subtitle = label(frame,"CLIENT EXPORT  /  v2",16,33,410,16,10,C.muted)
+local fold = button(frame,"-",540,12,30,28)
+local close = button(frame,"X",576,12,30,28)
+local body = new("Frame",frame,{BackgroundTransparency=1,Position=UDim2.fromOffset(0,62),Size=UDim2.fromOffset(620,388)})
+local side = new("Frame",body,{Position=UDim2.fromOffset(12,0),Size=UDim2.fromOffset(134,374),BackgroundColor3=C.panel,BorderSizePixel=0})
+round(side)
+button(side,"Export",8,12,118,30,true).AutoButtonColor = false
+label(side,"PLACE ID",12,58,110,18,10,C.muted)
+label(side,tostring(game.PlaceId),12,80,110,20,11)
+local counts = label(side,"Saved: 0\nFailed: 0",12,123,110,60,12)
+counts.TextYAlignment = Enum.TextYAlignment.Top
+local apiLabel = label(side,"",12,204,112,100,10,C.muted)
+apiLabel.TextWrapped = true
+label(side,"RightShift\nShow / hide",12,321,112,40,11,C.muted)
+label(body,"Export settings",162,0,430,24,15)
+local settings = {locals=true, modules=true, loaded=true, filter=""}
+local busy, cancelled, alive, collapsed = false, false, true, false
+local lastFolder = nil
+local function toggle(text,key,y)
+    label(body,text,164,y,300,27,12)
+    local b = button(body,"ON",540,y,60,26,true)
+    b.Activated:Connect(function()
+        if busy then return end
+        settings[key] = not settings[key]
+        b.Text = settings[key] and "ON" or "OFF"
+        b.BackgroundColor3 = settings[key] and C.purple or C.panel
+    end)
+end
+ toggle("LocalScripts", "locals", 35)
+ toggle("ModuleScripts", "modules", 69)
+ toggle("Include loaded modules", "loaded", 103)
+local filter = new("TextBox",body,{Position=UDim2.fromOffset(164,141),Size=UDim2.fromOffset(436,32),
+    PlaceholderText="Filter by script name / path (optional)",Text="",ClearTextOnFocus=false,
+    BackgroundColor3=C.panel,BorderSizePixel=0,TextColor3=C.text,PlaceholderColor3=C.muted,
+    Font=Enum.Font.Gotham,TextSize=12})
+round(filter)
+local dump = button(body,"DUMP SCRIPTS",164,186,208,34,true)
+local stop = button(body,"STOP",382,186,104,34)
+local copy = button(body,"COPY PATH",496,186,104,34)
+local status = label(body,"Ready",164,231,436,20,12,C.muted)
+status.TextTruncate = Enum.TextTruncate.AtEnd
+local track = new("Frame",body,{Position=UDim2.fromOffset(164,259),Size=UDim2.fromOffset(436,5),BackgroundColor3=C.panel,BorderSizePixel=0})
+round(track)
+local fill = new("Frame",track,{Size=UDim2.fromScale(0,1),BackgroundColor3=C.purple,BorderSizePixel=0})
+round(fill)
+local logBox = label(body,"Output: script/Roblox/\nEach run creates a new folder.",164,276,436,92,11,C.muted)
+logBox.TextWrapped = true
+logBox.TextYAlignment = Enum.TextYAlignment.Top
+local logs = {}
+local function log(text)
+    print("[KRITTAX HUB SCRIPT DUMPER] " .. text)
+    table.insert(logs,text)
+    if #logs > 4 then table.remove(logs,1) end
+    if alive then logBox.Text = table.concat(logs,"\n") end
+end
+local missing = {}
+for name, fn in pairs({getscripts=type(getscripts),decompile=type(decompile),writefile=type(writefile),isfolder=type(isfolder),makefolder=type(makefolder)}) do
+    if fn ~= "function" then table.insert(missing,name) end
+end
+apiLabel.Text = #missing == 0 and "API CHECK\nReady" or "MISSING API\n" .. table.concat(missing,", ")
+local function safeName(name)
+    local value = tostring(name):gsub('[%c<>:"/\\|?*]',"_"):gsub("[%. ]+$","")
+    if value == "" then value = "unnamed" end
+    local base = (value:match("^[^.]+") or value):upper()
+    if base == "CON" or base == "PRN" or base == "AUX" or base == "NUL" or base:match("^COM%d$") or base:match("^LPT%d$") then
+        value = "_" .. value
+    end
+    return value
+end
+local function export(options)
+    local root = "script/Roblox/dump-" .. tostring(game.PlaceId) .. "-" .. Http:GenerateGUID(false)
+    local function mkdir(path)
+        if not isfolder(path) then makefolder(path) end
+    end
+    mkdir("script")
+    mkdir("script/Roblox")
+    mkdir(root)
+    lastFolder = root
+    local used = {[root]={["manifest.json"]=true,["_detached"]=true}}
+    local folders = {}
+    local function reserve(parent,name,extension)
+        used[parent] = used[parent] or {}
+        local stem = safeName(name)
+        local candidate, n = stem .. extension, 1
+        while used[parent][candidate:lower()] do
+            n = n + 1
+            candidate = stem .. "__" .. n .. extension
+        end
+        used[parent][candidate:lower()] = true
+        return parent .. "/" .. candidate
+    end
+    local function folderFor(obj)
+        if obj == game then return root end
+        if obj == nil then
+            mkdir(root .. "/_detached")
+            return root .. "/_detached"
+        end
+        if folders[obj] then return folders[obj] end
+        local path = reserve(folderFor(obj.Parent),obj.Name,"")
+        mkdir(path)
+        folders[obj] = path
+        return path
+    end
+    local scripts,seen = {},{}
+    local function collect(items)
+        for _,obj in pairs(items) do
+            if typeof(obj) == "Instance" and not seen[obj] then
+                seen[obj] = true
+                local matches = (options.locals and obj:IsA("LocalScript")) or (options.modules and obj:IsA("ModuleScript"))
+                if matches then
+                    local ok,path = pcall(function() return obj:GetFullName() end)
+                    if ok and (options.filter == "" or path:lower():find(options.filter,1,true)) then
+                        table.insert(scripts,obj)
+                    end
+                end
+            end
+        end
+    end
+    collect(getscripts())
+    collect(game:GetDescendants())
+    if options.loaded and type(getloadedmodules) == "function" then
+        local ok,items = pcall(getloadedmodules)
+        if ok and type(items) == "table" then collect(items) end
+    end
+    local manifest = {placeId=game.PlaceId,total=#scripts,state="running",scripts={}}
+    local function saveManifest()
+        writefile(root .. "/manifest.json",Http:JSONEncode(manifest))
+    end
+    saveManifest()
+    local saved,failed = 0,0
+    log("Found " .. #scripts .. " scripts")
+    for i,obj in ipairs(scripts) do
+        if cancelled then break end
+        local entry = {index=i}
+        local ok,err = pcall(function()
+            entry.originalPath = obj:GetFullName()
+            entry.class = obj.ClassName
+            if alive then status.Text = string.format("%d/%d  %s",i,#scripts,entry.originalPath) end
+            local source = decompile(obj)
+            assert(type(source)=="string" and #source>0,"Decompiler returned no source")
+            entry.file = reserve(folderFor(obj.Parent),obj.Name,".lua")
+            writefile(entry.file,source)
+        end)
+        entry.saved = ok
+        if ok then saved=saved+1 else
+            failed=failed+1
+            entry.error=tostring(err)
+            log("Failed: " .. (entry.originalPath or tostring(i)) .. " | " .. tostring(err))
+        end
+        table.insert(manifest.scripts,entry)
+        manifest.saved,manifest.failed = saved,failed
+        saveManifest()
+        if alive then
+            counts.Text = string.format("Saved: %d\nFailed: %d",saved,failed)
+            fill.Size = UDim2.fromScale(i / #scripts,1)
+        end
+        task.wait()
+    end
+    manifest.state = cancelled and "stopped" or "completed"
+    saveManifest()
+    if alive then
+        status.Text = string.format("%s | Saved %d | Failed %d",manifest.state,saved,failed)
+        if #scripts==0 then fill.Size=UDim2.fromScale(0,1) end
+    end
+    log("Output: " .. root)
+end
+
+dump.Activated:Connect(function()
+    if busy then return end
+    if #missing>0 then log("Missing API: " .. table.concat(missing,", ")); return end
+    if not settings.locals and not settings.modules then log("Select at least one script type"); return end
+    busy,cancelled=true,false
+    dump.Text="DUMPING..."
+    filter.TextEditable=false
+    counts.Text="Saved: 0\nFailed: 0"
+    fill.Size=UDim2.fromScale(0,1)
+    status.Text="Scanning..."
+    logs={}
+    local options={locals=settings.locals,modules=settings.modules,loaded=settings.loaded,filter=filter.Text:lower()}
+    task.spawn(function()
+        local ok,err=pcall(export,options)
+        busy=false
+        if alive then
+            dump.Text="DUMP SCRIPTS"
+            filter.TextEditable=true
+            if not ok then status.Text="Export failed - see log" end
+        end
+        if not ok then log(tostring(err)) end
+    end)
+end)
+stop.Activated:Connect(function()
+    if busy then cancelled=true; status.Text="Stopping after current script..." end
+end)
+copy.Activated:Connect(function()
+    if not lastFolder then log("Run an export first"); return end
+    if type(setclipboard)=="function" then
+        local ok,err=pcall(setclipboard,lastFolder)
+        log(ok and "Output path copied" or tostring(err))
+    else log("Output: " .. lastFolder) end
+end)
+fold.Activated:Connect(function()
+    collapsed=not collapsed
+    body.Visible=not collapsed
+    frame.Size=UDim2.fromOffset(620,collapsed and 60 or 450)
+    fold.Text=collapsed and "+" or "-"
+end)
+local connections={}
+local dragging,dragStart,startPos
+-- Drag the header; clamp position to keep the title reachable.
+frame.InputBegan:Connect(function(input)
+    if input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch then
+        if input.Position.Y <= frame.AbsolutePosition.Y + 55 * scale.Scale then
+            dragging=true; dragStart=input.Position; startPos=frame.Position
+        end
+    end
+end)
+table.insert(connections,UIS.InputChanged:Connect(function(input)
+    if dragging and (input.UserInputType==Enum.UserInputType.MouseMovement or input.UserInputType==Enum.UserInputType.Touch) then
+        local delta=input.Position-dragStart
+        local viewport=gui.AbsoluteSize
+        local x=startPos.X.Scale*viewport.X+startPos.X.Offset+delta.X
+        local y=startPos.Y.Scale*viewport.Y+startPos.Y.Offset+delta.Y
+        x=math.clamp(x,0,math.max(0,viewport.X-frame.AbsoluteSize.X))
+        y=math.clamp(y,0,math.max(0,viewport.Y-60*scale.Scale))
+        frame.Position=UDim2.fromOffset(x,y)
+    end
+end))
+table.insert(connections,UIS.InputEnded:Connect(function(input)
+    if input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch then dragging=false end
+end))
+table.insert(connections,UIS.InputBegan:Connect(function(input,processed)
+    if not processed and input.KeyCode==Enum.KeyCode.RightShift then gui.Enabled=not gui.Enabled end
+end))
+close.Activated:Connect(function()
+    if busy then
+        log("Press STOP and wait before closing; or use '-' to collapse.")
+        return
+    end
+    alive=false
+    for _,connection in ipairs(connections) do connection:Disconnect() end
+    gui:Destroy()
+end)
+log("Ready. Select options, then press DUMP SCRIPTS.")
