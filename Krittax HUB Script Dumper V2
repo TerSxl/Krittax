@@ -1,4 +1,4 @@
--- KRITTAX HUB SCRIPT DUMPER | GUI v3
+-- KRITTAX HUB SCRIPT DUMPER | GUI v4.2
 -- For your own / authorized Roblox experience.
 -- Client-visible LocalScripts and ModuleScripts only. Never runs dumped code.
 local Players = game:GetService("Players")
@@ -39,14 +39,14 @@ local function button(parent, text, x, y, w, h, accent)
 end
 local gui = new("ScreenGui", host, {Name = guiName, ResetOnSpawn = false,
     ZIndexBehavior = Enum.ZIndexBehavior.Sibling, DisplayOrder = 100})
-local frame = new("Frame", gui, {Size = UDim2.fromOffset(620,450),
-    Position = UDim2.new(0.5,-310,0.5,-225), BackgroundColor3 = C.bg, BorderSizePixel = 0})
+local frame = new("Frame", gui, {Size = UDim2.fromOffset(620,540),
+    Position = UDim2.new(0.5,-310,0.5,-270), BackgroundColor3 = C.bg, BorderSizePixel = 0})
 round(frame,10)
 new("UIStroke", frame, {Color = C.border, Thickness = 1})
 local scale = new("UIScale", frame)
 local function fit()
     local camera = workspace.CurrentCamera
-    if camera then scale.Scale = math.min(1, camera.ViewportSize.X / 650, camera.ViewportSize.Y / 480) end
+    if camera then scale.Scale = math.min(1, camera.ViewportSize.X / 650, camera.ViewportSize.Y / 570) end
 end
 fit()
 local logo = new("ImageLabel",frame,{Name="KRITTAXLogo",Position=UDim2.fromOffset(12,8),
@@ -56,11 +56,11 @@ round(logo,7)
 local logoFallback = label(logo,"K",0,0,46,46,26,C.purple)
 logoFallback.TextXAlignment=Enum.TextXAlignment.Center
 local title = label(frame,"KRITTAX HUB SCRIPT DUMPER",70,10,460,25,15)
-local subtitle = label(frame,"CLIENT EXPORT  /  v3",70,33,460,16,10,C.muted)
+local subtitle = label(frame,"SCRIPTS / MAP / MODEL  /  v4.2",70,33,460,16,10,C.muted)
 local fold = button(frame,"-",540,12,30,28)
 local close = button(frame,"X",576,12,30,28)
-local body = new("Frame",frame,{BackgroundTransparency=1,Position=UDim2.fromOffset(0,62),Size=UDim2.fromOffset(620,388)})
-local side = new("Frame",body,{Position=UDim2.fromOffset(12,0),Size=UDim2.fromOffset(134,374),BackgroundColor3=C.panel,BorderSizePixel=0})
+local body = new("Frame",frame,{BackgroundTransparency=1,Position=UDim2.fromOffset(0,62),Size=UDim2.fromOffset(620,478)})
+local side = new("Frame",body,{Position=UDim2.fromOffset(12,0),Size=UDim2.fromOffset(134,464),BackgroundColor3=C.panel,BorderSizePixel=0})
 round(side)
 button(side,"Export",8,12,118,30,true).AutoButtonColor = false
 label(side,"PLACE ID",12,58,110,18,10,C.muted)
@@ -72,7 +72,7 @@ local apiLabel = label(side,"",12,253,112,58,10,C.muted)
 apiLabel.TextWrapped = true
 label(side,"RightShift\nShow / hide",12,321,112,40,11,C.muted)
 label(body,"Export settings",162,0,430,24,15)
-local settings = {locals=true, modules=true, loaded=true, fast=false, filter=""}
+local settings = {locals=true, modules=true, loaded=true, fast=false, includeCore=false, filter=""}
 local busy, cancelled, alive, collapsed = false, false, true, false
 local lastFolder = nil
 local function toggle(text,key,y)
@@ -108,6 +108,22 @@ round(fill)
 local logBox = label(body,"Output: script/Roblox/\nEach run creates a new folder.",164,292,436,76,11,C.muted)
 logBox.TextWrapped = true
 logBox.TextYAlignment = Enum.TextYAlignment.Top
+local mapJSON=button(body,"MAP JSON",164,382,138,34)
+local studioFiles=button(body,"SAVE MODEL",312,382,138,34)
+local dumpAll=button(body,"SCRIPTS + JSON",460,382,140,34,true)
+label(body,"Studio: select a small model first (max 2,000 objects).\nNative save may still crash; Scripts + JSON never calls it.",164,424,436,40,10,C.muted).TextWrapped=true
+local coreToggle=button(side,"ROBLOX CORE: OFF",8,360,118,28)
+coreToggle.TextSize=9
+coreToggle.Activated:Connect(function()
+    if busy then return end
+    settings.includeCore=not settings.includeCore
+    coreToggle.Text=settings.includeCore and "ROBLOX CORE: ON" or "ROBLOX CORE: OFF"
+    coreToggle.BackgroundColor3=settings.includeCore and C.purple or C.panel
+end)
+local modelPicker=button(side,"SELECT MODEL",8,400,118,32)
+modelPicker.TextSize=9
+modelPicker.TextTruncate=Enum.TextTruncate.AtEnd
+local studioTarget,modelIndex=nil,0
 local logs = {}
 local function log(text)
     print("[KRITTAX HUB SCRIPT DUMPER] " .. text)
@@ -159,6 +175,8 @@ local function updateETA(run, finished)
     local message = "Estimating..."
     if finished then
         message = "--"
+    elseif run.phase=="studio" then
+        message="Native save: no time estimate"
     elseif cancelled then
         message = "Stopping..."
     elseif run.expectedFinish then
@@ -173,6 +191,7 @@ local function contentChecksum(text)
     for i=1,#text do
         a=(a+text:byte(i))%65521
         b=(b+a)%65521
+        if i%16384==0 then task.wait() end
     end
     return string.format("%.0f",b*65536+a)
 end
@@ -197,7 +216,7 @@ local function checkSource(source)
         or diagnostic:match("^decompiler timed out")) then
         return false,trimmed,"decompiler_output"
     end
-    if type(loadstring)=="function" then
+    if type(loadstring)=="function" and #source<=262144 then
         local called, compiled, err = pcall(loadstring,source,"KRITTAX validation")
         if called and type(compiled)=="function" then return true,nil,nil,true end
         if called then return false,tostring(err or "Source cannot be compiled"),"invalid_source" end
@@ -211,7 +230,7 @@ local function export(options, run, resumeExisting)
         if not isfolder(path) then makefolder(path) end
     end
     if not job then
-        local root = "script/Roblox/dump-" .. tostring(game.PlaceId) .. "-" .. Http:GenerateGUID(false)
+        local root = options.outputRoot or "script/Roblox/dump-" .. tostring(game.PlaceId) .. "-" .. Http:GenerateGUID(false)
         mkdir("script")
         mkdir("script/Roblox")
         mkdir(root)
@@ -244,15 +263,19 @@ local function export(options, run, resumeExisting)
             return path
         end
         local scripts,seen={},{}
-        local candidates=0
+        local candidates,skippedCore,scanned=0,0,0
         local function collect(items)
             for _,obj in pairs(items) do
+                scanned=scanned+1
+                if scanned%200==0 then status.Text="Scanning scripts: " .. scanned;task.wait();if cancelled then return end end
                 if typeof(obj)=="Instance" and not seen[obj] then
                     seen[obj]=true
                     local matches=(options.locals and obj:IsA("LocalScript")) or (options.modules and obj:IsA("ModuleScript"))
                     if matches then
                         local ok,path=pcall(function() return obj:GetFullName() end)
-                        if ok and (options.filter=="" or path:lower():find(options.filter,1,true)) then
+                        local core=ok and (path:match("^CorePackages%.") or path:match("^CoreGui%.") or path:match("^Chat%."))
+                        if core and not options.includeCore then skippedCore=skippedCore+1 end
+                        if ok and (options.includeCore or not core) and (options.filter=="" or path:lower():find(options.filter,1,true)) then
                             candidates=candidates+1
                             if not options.fast or isMainScript(obj.Name) then
                                 table.insert(scripts,{object=obj,originalPath=path,class=obj.ClassName})
@@ -263,7 +286,7 @@ local function export(options, run, resumeExisting)
             end
         end
         collect(getscripts())
-        collect(game:GetDescendants())
+        -- getscripts already enumerates scripts; avoid a second full DataModel scan.
         if options.loaded and type(getloadedmodules)=="function" then
             local ok,items=pcall(getloadedmodules)
             if ok and type(items)=="table" then collect(items) end
@@ -271,8 +294,9 @@ local function export(options, run, resumeExisting)
         table.sort(scripts,function(a,b) return a.originalPath<b.originalPath end)
         local manifest={version=3,placeId=game.PlaceId,total=#scripts,state="running",scripts={},
             mode=options.fast and "fast" or "full",candidates=candidates,skipped=candidates-#scripts,
-            resumeScope="Current GUI session; original selection",errors={}}
+            resumeScope="Current GUI session; original selection",skippedRobloxCore=skippedCore,errors={}}
         for index,item in ipairs(scripts) do
+            if index%50==0 then status.Text="Preparing script files: " .. index;task.wait() end
             local entry={index=index,originalPath=item.originalPath,class=item.class,saved=false,attempts=0}
             local ok,path=pcall(function()
                 local file=reserve(folderFor(item.object.Parent),item.object.Name,".lua")
@@ -357,6 +381,9 @@ local function export(options, run, resumeExisting)
         if alive then status.Text=string.format("%d/%d  %s",index,#pending,entry.originalPath) end
         for attempt=1,3 do
             entry.attempts=entry.attempts+1
+            pcall(writefile,job.root .. "/current-script.json",Http:JSONEncode({state="decompiling",path=entry.originalPath,index=index,total=#pending,attempt=attempt}))
+            task.wait(0.1)
+            if cancelled then message="Stopped before decompile";category="cancelled";break end
             local ok,result=pcall(decompile,item.object)
             if ok then
                 local valid,reason,kind,checked=checkSource(result)
@@ -401,8 +428,9 @@ local function export(options, run, resumeExisting)
         updateETA(run,false)
         updateCounts()
         if alive then fill.Size=UDim2.fromScale((reused+index)/#job.items,1) end
-        task.wait()
+        task.wait(index%25==0 and 0.5 or 0.05)
     end
+    pcall(writefile,job.root .. "/current-script.json",Http:JSONEncode({state=cancelled and "stopped" or "finished"}))
     manifest.state=cancelled and "stopped" or "completed"
     flush(true)
     if alive then status.Text=string.format("%s | Saved %d | Failed %d | Reused %d",manifest.state,saved,failed,reused) end
@@ -424,7 +452,7 @@ local function startExport(resumeExisting)
     fill.Size=UDim2.fromScale(0,1)
     status.Text="Scanning..."
     logs={}
-    local options={locals=settings.locals,modules=settings.modules,loaded=settings.loaded,fast=settings.fast,filter=filter.Text:lower()}
+    local options={locals=settings.locals,modules=settings.modules,loaded=settings.loaded,fast=settings.fast,includeCore=settings.includeCore,filter=filter.Text:lower()}
     task.spawn(function()
         while busy and alive and activeRun == run do
             updateETA(run, false)
@@ -447,6 +475,279 @@ local function startExport(resumeExisting)
         if not ok then log(tostring(err)) end
     end)
 end
+-- Map export: a typed instance graph, asset-reference index, and native Studio saves.
+local function mapValue(value,ids,depth)
+    depth=depth or 0
+    local kind=typeof(value)
+    if kind=="nil" or kind=="boolean" or kind=="string" then return value end
+    if kind=="number" then
+        if value~=value or math.abs(value)==math.huge then return {type="number",value=tostring(value)} end
+        return value
+    end
+    if kind=="Instance" then
+        local ok,path=pcall(function()return value:GetFullName()end)
+        return {type=kind,id=ids[value],path=ok and path or "Unavailable"}
+    end
+    if kind=="Vector3" then return {type=kind,x=value.X,y=value.Y,z=value.Z} end
+    if kind=="Vector2" then return {type=kind,x=value.X,y=value.Y} end
+    if kind=="Color3" then return {type=kind,r=value.R,g=value.G,b=value.B} end
+    if kind=="CFrame" then return {type=kind,components={value:GetComponents()}} end
+    if kind=="UDim" then return {type=kind,scale=value.Scale,offset=value.Offset} end
+    if kind=="UDim2" then return {type=kind,x=mapValue(value.X,ids),y=mapValue(value.Y,ids)} end
+    if kind=="BrickColor" then return {type=kind,number=value.Number,name=value.Name} end
+    if kind=="EnumItem" then return {type=kind,value=tostring(value)} end
+    if kind=="NumberRange" then return {type=kind,min=value.Min,max=value.Max} end
+    if kind=="Rect" then return {type=kind,min=mapValue(value.Min,ids),max=mapValue(value.Max,ids)} end
+    if kind=="NumberSequence" or kind=="ColorSequence" then
+        local points={}
+        for _,point in ipairs(value.Keypoints) do
+            points[#points+1]={time=point.Time,value=mapValue(point.Value,ids),envelope=kind=="NumberSequence" and point.Envelope or nil}
+        end
+        return {type=kind,keypoints=points}
+    end
+    if kind=="PhysicalProperties" then return {type=kind,density=value.Density,friction=value.Friction,elasticity=value.Elasticity,frictionWeight=value.FrictionWeight,elasticityWeight=value.ElasticityWeight} end
+    if kind=="table" and depth<8 then
+        local out={}
+        for key,item in pairs(value) do out[tostring(key)]=mapValue(item,ids,depth+1) end
+        return out
+    end
+    return {type=kind,value=tostring(value),representation="text_only"}
+end
+local mapProperties={
+    {"BasePart",{"CFrame","Size","Color","Material","MaterialVariant","Transparency","Reflectance","Anchored","CanCollide","CanTouch","CanQuery","CastShadow","CollisionGroup","CustomPhysicalProperties"}},
+    {"Part",{"Shape"}},
+    {"MeshPart",{"MeshId","TextureID","RenderFidelity","CollisionFidelity","DoubleSided"}},
+    {"SpecialMesh",{"MeshType","MeshId","TextureId","Scale","Offset","VertexColor"}},
+    {"Model",{"PrimaryPart","WorldPivot","ModelStreamingMode"}},
+    {"Attachment",{"CFrame","Visible","Axis","SecondaryAxis"}},
+    {"JointInstance",{"Part0","Part1","C0","C1","Enabled"}},
+    {"WeldConstraint",{"Part0","Part1","Enabled"}},
+    {"Constraint",{"Attachment0","Attachment1","Enabled","Visible"}},
+    {"Decal",{"Texture","Face","Color3","Transparency","ZIndex"}},
+    {"Texture",{"StudsPerTileU","StudsPerTileV","OffsetStudsU","OffsetStudsV"}},
+    {"SurfaceAppearance",{"ColorMap","MetalnessMap","NormalMap","RoughnessMap","AlphaMode"}},
+    {"MaterialVariant",{"BaseMaterial","ColorMap","MetalnessMap","NormalMap","RoughnessMap","StudsPerTile"}},
+    {"Light",{"Color","Brightness","Enabled","Shadows"}},
+    {"PointLight",{"Range"}},
+    {"SpotLight",{"Range","Angle","Face"}},
+    {"SurfaceLight",{"Range","Angle","Face"}},
+    {"Sound",{"SoundId","Volume","PlaybackSpeed","Looped","RollOffMinDistance","RollOffMaxDistance"}},
+    {"ParticleEmitter",{"Texture","Color","Size","Transparency","Rate","Lifetime","Speed","Enabled","LightEmission","SpreadAngle","Rotation","RotSpeed","Acceleration"}},
+    {"Beam",{"Texture","Attachment0","Attachment1","Color","Transparency","Enabled","Width0","Width1","CurveSize0","CurveSize1"}},
+    {"Trail",{"Texture","Attachment0","Attachment1","Color","Transparency","Enabled","Lifetime","WidthScale"}},
+    {"Sky",{"SkyboxBk","SkyboxDn","SkyboxFt","SkyboxLf","SkyboxRt","SkyboxUp","SunTextureId","MoonTextureId","StarCount"}},
+    {"Atmosphere",{"Density","Offset","Color","Decay","Glare","Haze"}},
+    {"Lighting",{"Ambient","OutdoorAmbient","Brightness","ClockTime","GeographicLatitude","GlobalShadows","ExposureCompensation","FogColor","FogStart","FogEnd"}},
+    {"BloomEffect",{"Enabled","Intensity","Size","Threshold"}},
+    {"ColorCorrectionEffect",{"Enabled","Brightness","Contrast","Saturation","TintColor"}},
+    {"BlurEffect",{"Enabled","Size"}},
+    {"SunRaysEffect",{"Enabled","Intensity","Spread"}},
+    {"DepthOfFieldEffect",{"Enabled","FarIntensity","NearIntensity","FocusDistance","InFocusRadius"}},
+    {"Terrain",{"WaterColor","WaterReflectance","WaterTransparency","WaterWaveSize","WaterWaveSpeed"}},
+    {"ProximityPrompt",{"ActionText","ObjectText","Enabled","HoldDuration","MaxActivationDistance","RequiresLineOfSight"}},
+    {"ClickDetector",{"MaxActivationDistance","CursorIcon"}},
+    {"ValueBase",{"Value"}},
+    {"Animation",{"AnimationId"}},
+    {"GuiObject",{"Position","Size","AnchorPoint","Visible","BackgroundColor3","BackgroundTransparency","Rotation","ZIndex"}},
+    {"SurfaceGui",{"Adornee","Face","CanvasSize","Enabled","AlwaysOnTop","PixelsPerStud"}},
+    {"BillboardGui",{"Adornee","Size","StudsOffset","Enabled","AlwaysOnTop","MaxDistance"}},
+    {"ImageLabel",{"Image","ImageColor3","ImageTransparency"}},
+    {"TextLabel",{"Text","TextColor3","TextSize","Font","TextTransparency"}},
+}
+local assetProperties={MeshId=true,TextureID=true,TextureId=true,Texture=true,ColorMap=true,MetalnessMap=true,NormalMap=true,RoughnessMap=true,SoundId=true,AnimationId=true,Image=true,SkyboxBk=true,SkyboxDn=true,SkyboxFt=true,SkyboxLf=true,SkyboxRt=true,SkyboxUp=true,SunTextureId=true,MoonTextureId=true}
+local function exportMapJSON(root,run)
+    local folder=root .. "/map-json"
+    if not isfolder(folder) then makefolder(folder) end
+    local tags=game:GetService("CollectionService")
+    local roots={workspace,game:GetService("Lighting"),game:GetService("MaterialService"),game:GetService("SoundService")}
+    local objects,ids={},{}
+    local function add(object)
+        if not ids[object] then objects[#objects+1]=object;ids[object]=#objects end
+    end
+    status.Text="Taking snapshot of loaded map objects..."
+    for _,object in ipairs(roots) do
+        if cancelled then break end
+        add(object)
+        for i,descendant in ipairs(object:GetDescendants()) do add(descendant);if i%200==0 then task.wait();if cancelled then break end end end
+    end
+    local index={version=1,placeId=game.PlaceId,createdAt=os.time(),state="running",snapshotObjects=#objects,written=0,failed=0,
+        chunks={},roots={},assetFile="assets.json",propertyReadFailures=0,
+        limitations={"Only client-loaded objects at snapshot time; streaming can omit regions.","Selected readable properties only, not an exhaustive property dump.","Terrain voxel data, mesh binaries and external asset files are not embedded in JSON.","Native .rbxl/.rbxm files are separate and depend on executor serializer support."}}
+    pcall(function()index.streamingEnabled=workspace.StreamingEnabled end)
+    for _,object in ipairs(roots) do index.roots[#index.roots+1]={id=ids[object],name=object.Name} end
+    local function checkpoint() writefile(folder .. "/map-index.json",Http:JSONEncode(index)) end
+    checkpoint()
+    local rows,assets,assetSeen={}, {}, {}
+    local function chunk()
+        if #rows==0 then return end
+        local name=string.format("nodes-%05d.json",#index.chunks+1)
+        writefile(folder .. "/" .. name,Http:JSONEncode({nodes=rows}))
+        index.chunks[#index.chunks+1]={file=name,count=#rows}
+        index.written=index.written+#rows
+        rows={};checkpoint()
+    end
+    local started=os.clock()
+    local workOK,workError=pcall(function()
+        for number,object in ipairs(objects) do
+            if cancelled then break end
+            local record={id=number,properties={}}
+            local ok,err=pcall(function()
+                record.name=object.Name;record.class=object.ClassName;record.parentId=ids[object.Parent]
+                record.path=object:GetFullName()
+                record.attributes=mapValue(object:GetAttributes(),ids)
+                record.tags=tags:GetTags(object)
+                for _,group in ipairs(mapProperties) do
+                    if object:IsA(group[1]) then
+                        for _,property in ipairs(group[2]) do
+                            local readOK,value=pcall(function()return object[property]end)
+                            if readOK then
+                                record.properties[property]=mapValue(value,ids)
+                                if assetProperties[property] and type(value)=="string" and value~="" and not assetSeen[value] then
+                                    assetSeen[value]=true;assets[#assets+1]={reference=value,firstNodeId=number,property=property}
+                                end
+                            else index.propertyReadFailures=index.propertyReadFailures+1 end
+                        end
+                    end
+                end
+            end)
+            if not ok then record.error=tostring(err);index.failed=index.failed+1 end
+            rows[#rows+1]=record
+            if #rows>=500 then chunk() end
+            if number%20==0 then
+                status.Text=string.format("Map JSON: %d / %d objects",number,#objects)
+                counts.Text="Map objects: " .. number .. "\nErrors: " .. index.failed
+                fill.Size=UDim2.fromScale(number/#objects,1)
+                run.expectedFinish=os.clock()+((os.clock()-started)/number)*(#objects-number)
+                task.wait()
+            end
+        end
+        chunk()
+        writefile(folder .. "/assets.json",Http:JSONEncode({references=assets,downloaded=false}))
+    end)
+    index.state=not workOK and "error" or (cancelled and "stopped" or "completed")
+    if not workOK then index.error=tostring(workError) end
+    index.finishedAt=os.time()
+    checkpoint()
+    if not workOK then error(tostring(workError),0) end
+    fill.Size=UDim2.fromScale(index.written/math.max(1,#objects),1)
+    return index
+end
+local function modelSize(target)
+    local stack={target};local count=0
+    while #stack>0 do
+        local object=table.remove(stack)
+        count=count+1
+        if count>2000 then return count end
+        for _,child in ipairs(object:GetChildren()) do stack[#stack+1]=child end
+        if count%100==0 then task.wait() end
+    end
+    return count
+end
+modelPicker.Activated:Connect(function()
+    if busy then return end
+    local choices={}
+    for _,child in ipairs(workspace:GetChildren()) do
+        if (child:IsA("Model") or child:IsA("Folder")) and not Players:GetPlayerFromCharacter(child) then choices[#choices+1]=child end
+    end
+    table.sort(choices,function(a,b)return a.Name<b.Name end)
+    if #choices==0 then studioTarget=nil;log("No top-level Model/Folder available");return end
+    modelIndex=modelIndex%#choices+1
+    studioTarget=choices[modelIndex]
+    modelPicker.Text=studioTarget.Name .. " >"
+    log("Selected model: " .. studioTarget.Name .. ". Click SELECT MODEL again to cycle.")
+end)
+local function exportStudio(root,run,report)
+    report.studio={}
+    if type(saveinstance)~="function" then
+        report.studio.state="unsupported";report.studio.error="saveinstance is unavailable";log(report.studio.error);return
+    end
+    local target=studioTarget
+    if not target or not target:IsDescendantOf(workspace) then
+        report.studio.state="not_started";report.studio.error="Select a Model/Folder first using SELECT MODEL";log(report.studio.error);return
+    end
+    status.Text="Checking selected model size..."
+    local count=modelSize(target)
+    if count>2000 then
+        report.studio.state="too_large";report.studio.error="More than 2,000 objects. Select a smaller top-level model, or use MAP JSON.";log(report.studio.error);return
+    end
+    if cancelled then report.studio.state="stopped";return end
+    local path=root .. "/selected-model.rbxm"
+    report.studio={state="native_save_started",file=path,target=target:GetFullName(),objects=count,
+        note="Selected model only. Native crashes cannot be caught by Lua; full-place export is disabled."}
+    writefile(root .. "/bundle-report.json",Http:JSONEncode(report))
+    run.phase="studio";run.expectedFinish=nil
+    status.Text="Native save: " .. target.Name .. " (" .. count .. " objects)"
+    log(status.Text)
+    task.wait(0.5)
+    if cancelled then report.studio.state="stopped";run.phase=nil;return end
+    local ok,err=pcall(saveinstance,target,{FileName=path,Decompile=false,RemovePlayerCharacters=true,SavePlayers=false,MaxThreads=1,ShowStatus=true})
+    if not ok then report.studio.state="error";report.studio.error=tostring(err)
+    else
+        local checked,exists=false,false
+        if type(isfile)=="function" then checked,exists=pcall(isfile,path) end
+        report.studio.state=checked and exists and "file_present" or "returned_unverified"
+    end
+    log("Model save: " .. report.studio.state)
+    writefile(root .. "/bundle-report.json",Http:JSONEncode(report))
+    run.phase=nil
+end
+local function startBundle(mode)
+    if busy then return end
+    for name,kind in pairs({writefile=type(writefile),makefolder=type(makefolder),isfolder=type(isfolder)}) do
+        if kind~="function" then log("Missing API: " .. name);return end
+    end
+    busy=true;cancelled=false
+    local run={started=os.clock()};activeRun=run
+    filter.TextEditable=false
+    local report={version=4,placeId=game.PlaceId,mode=mode,state="running",startedAt=os.time()}
+    task.spawn(function()
+        while busy and alive and activeRun==run do updateETA(run,false);task.wait(1) end
+    end)
+    task.spawn(function()
+        local root
+        local ok,err=pcall(function()
+            if not isfolder("script") then makefolder("script") end
+            if not isfolder("script/Roblox") then makefolder("script/Roblox") end
+            root="script/Roblox/export-" .. tostring(game.PlaceId) .. "-" .. Http:GenerateGUID(false)
+            makefolder(root);lastFolder=root
+            local function checkpoint()writefile(root .. "/bundle-report.json",Http:JSONEncode(report))end
+            checkpoint()
+            if mode=="json" or mode=="all" then
+                local good,value=pcall(exportMapJSON,root,run)
+                report.mapJSON=good and {state=value.state,objects=value.written,errors=value.failed,index="map-json/map-index.json"} or {state="error",error=tostring(value)}
+                checkpoint()
+            end
+            if mode=="all" and not cancelled then
+                run.expectedFinish=nil
+                if #missing>0 then report.scripts={state="unsupported",error=table.concat(missing,", ")}
+                else
+                    local good,value=pcall(export,{locals=true,modules=true,loaded=true,fast=false,includeCore=settings.includeCore,filter="",outputRoot=root},run,false)
+                    report.scripts=good and {state=lastJob.manifest.state,saved=lastJob.manifest.saved,failed=lastJob.manifest.failed,manifest="manifest.json"} or {state="error",error=tostring(value)}
+                    if not good and run.flush then run.manifest.state="error";pcall(run.flush,true) end
+                end
+                checkpoint()
+            end
+            if mode=="studio" and not cancelled then exportStudio(root,run,report)
+            elseif mode=="all" then report.studio={state="not_requested",note="Native saves are separate after crash reports. Use SELECT MODEL and SAVE MODEL."} end
+            report.state=cancelled and "stopped" or "finished"
+            report.finishedAt=os.time()
+            checkpoint()
+        end)
+        busy=false;run.phase=nil;filter.TextEditable=true;updateETA(run,true)
+        if not ok then
+            report.state="error";report.error=tostring(err)
+            if root then pcall(writefile,root .. "/bundle-report.json",Http:JSONEncode(report)) end
+            status.Text="Export error - see log";log(tostring(err))
+        else
+            status.Text=cancelled and "Stopped - partial output kept" or "Finished - check bundle-report.json for each result"
+            log("Output: " .. tostring(root))
+        end
+    end)
+end
+mapJSON.Activated:Connect(function()startBundle("json")end)
+studioFiles.Activated:Connect(function()startBundle("studio")end)
+dumpAll.Activated:Connect(function()startBundle("all")end)
+
 dump.Activated:Connect(function() startExport(false) end)
 resume.Activated:Connect(function() startExport(true) end)
 stop.Activated:Connect(function()
@@ -462,7 +763,7 @@ end)
 fold.Activated:Connect(function()
     collapsed=not collapsed
     body.Visible=not collapsed
-    frame.Size=UDim2.fromOffset(620,collapsed and 60 or 450)
+    frame.Size=UDim2.fromOffset(620,collapsed and 60 or 540)
     fold.Text=collapsed and "+" or "-"
 end)
 local connections={}
